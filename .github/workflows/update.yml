@@ -5,7 +5,7 @@ on:
     - cron: "0,30 * * * *"   # every 30 min; meta is refreshed once a day below
   push:                        # also run when the fetcher or config changes
     branches: [main]
-    paths: ["docs/**", "!docs/data/**", "scripts/**", "config/**", "requirements.txt", ".github/**"]
+    paths: ["docs/**", "!docs/data/**", "scripts/**", "config/**", "database/**", "requirements.txt", ".github/**"]
   workflow_dispatch:
     inputs:
       meta:

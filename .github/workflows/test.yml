@@ -18,6 +18,7 @@ jobs:
         with:
           node-version: '22'
       - run: pip install -r requirements.txt
+      - run: python tests/test_predgg.py
       - run: python tests/test_fetch.py
       - run: node tests/test_engine.js
       - run: node tests/test_session.js

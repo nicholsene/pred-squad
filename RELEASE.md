@@ -64,3 +64,5 @@ Omeda's V1.11.2 minimap examples show numeric jungle counters, including seconds
 Screen-on reports an active lock only after the browser grants it; leaving Match or backgrounding suspends it, returning reacquires when requested, and a failed request offers Retry. Unsupported browsers have a clear unavailable state. Browser tests simulate acquisition, tab departure, reacquisition and manual off. Actual device OS power-saving policies can still release a browser wake lock.
 
 The full-HUD minimap guide was checked against the official Steam gameplay screenshot (map at the upper right, below the team strip): https://store.steampowered.com/app/961200/Predecessor/ . Position remains approximate to accommodate HUD scaling.
+
+Token-service HTTP 429/5xx failures now receive up to four bounded attempts. Invalid credentials fail promptly. The latest main-branch refresh rerun encountered an upstream pred.gg HTTP 500, independently of the app checks; the new pipeline retains good datasets and reports stage health.
