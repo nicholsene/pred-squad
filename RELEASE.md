@@ -62,3 +62,5 @@ Camera guides include full gameplay HUD, minimap-only, loading screen and scoreb
 Omeda's V1.11.2 minimap examples show numeric jungle counters, including seconds-only and `2m+` labels: https://www.predecessorgame.com/en-US/news/patch-notes/v1-11-2-patch-notes . The timer reader accepts exact seconds and m:ss; approximate labels never become an exact respawn time. Reference images remain outside the repository.
 
 Screen-on reports an active lock only after the browser grants it; leaving Match or backgrounding suspends it, returning reacquires when requested, and a failed request offers Retry. Unsupported browsers have a clear unavailable state. Browser tests simulate acquisition, tab departure, reacquisition and manual off. Actual device OS power-saving policies can still release a browser wake lock.
+
+The full-HUD minimap guide was checked against the official Steam gameplay screenshot (map at the upper right, below the team strip): https://store.steampowered.com/app/961200/Predecessor/ . Position remains approximate to accommodate HUD scaling.
