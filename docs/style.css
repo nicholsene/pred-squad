@@ -440,3 +440,10 @@ details[open] summary::before { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+#record h3.sub { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+#record .grid { margin-top: 12px; }
+[hidden] { display: none !important; }
+table.fit { table-layout: fixed; width: 100%; min-width: 0; }
+table.fit th.num, table.fit td.num { width: 64px; white-space: nowrap; }
+table.fit td { overflow-wrap: anywhere; }

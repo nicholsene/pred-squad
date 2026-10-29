@@ -81,8 +81,44 @@
     return E.squadRows(tm).filter(r => s.includes(r.member) && s.every(m => r.together.includes(m)));
   }
 
+  // one player selected: Record becomes that player's full profile
+  function renderSolo(m) {
+    const rows = ctx.rows.filter(r => r.member === m).sort((a, b) => String(b.start).localeCompare(String(a.start)));
+    const all = E.record(rows);
+    $("#rec-h").innerHTML = `<span class="step">1</span>${esc(label(m))}'s record`;
+    $("#exact").closest(".toggle").hidden = true;
+    if (!all.games) { $("#record").innerHTML = `<p class="muted">No games for ${esc(label(m))} yet.</p>`; return; }
+    const others = squad.players.map(p => p.key).filter(k => k !== m);
+    const groups = [["Solo (no squad)", r => r.together.length === 1]]
+      .concat(others.map(o => [`With ${label(o)} only`, r => r.together.length === 2 && r.together.includes(o)]))
+      .concat(others.length > 1 ? [["With the full squad", r => r.together.length === others.length + 1]] : []);
+    const recent = rows.slice(0, 10);
+    const tbl = (head, list) => `<div class="scroll"><table class="fit"><thead><tr><th>${head}</th><th class="num">W–L</th><th class="num">Win</th></tr></thead><tbody>${list.map(([name, rec, sub]) =>
+      `<tr><td><b>${esc(name)}</b>${sub ? `<br><span class="muted">${esc(sub)}</span>` : ""}</td><td class="num">${wl(rec)}</td><td class="num ${rec.wr >= .5 ? "good" : "bad"}">${pct(rec.wr)}</td></tr>`).join("")}</tbody></table></div>`;
+    const byRole = [...new Set(rows.map(r => r.role))].map(role => {
+      const rr = rows.filter(r => r.role === role);
+      const top = [...new Set(rr.map(r => r.hero))].map(h => [h, rr.filter(r => r.hero === h).length]).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([h, n]) => heroName(h) + (n > 1 ? " ×" + n : "")).join(", ");
+      return [roleName(role), E.record(rr), top];
+    }).sort((a, b) => b[1].games - a[1].games);
+    const byHero = [...new Set(rows.map(r => r.hero))].map(h => [heroName(h), E.record(rows.filter(r => r.hero === h))]).sort((a, b) => b[1].games - a[1].games || b[1].wr - a[1].wr);
+    let html = `<div class="tile hero-stat">
+      <div><div class="who">${esc(label(m))} · all games</div>
+        <div class="big">${wl(all)}<small>${pct(all.wr)} win rate</small></div></div>
+      <div style="min-width:160px;flex:1;max-width:320px"><div class="bar-meter"><i style="width:${Math.round(all.wr * 100)}%"></i></div>
+        <div class="muted" style="font-size:12px;margin-top:6px">${all.games} game${all.games === 1 ? "" : "s"} · last ${recent.length}: ${recent.map(r => `<b class="${r.win ? "good" : "bad"}">${r.win ? "W" : "L"}</b>`).join(" ")}</div></div>
+    </div>`;
+    html += `<div class="grid">${statTile(m, rows)}</div>`;
+    html += `<h3 class="sub">Who you played with</h3>` + tbl("Group", groups.map(([n, f]) => [n, E.record(rows.filter(f))]).filter(x => x[1].games));
+    html += `<h3 class="sub">By lane</h3>` + tbl("Lane", byRole);
+    html += `<h3 class="sub">By hero</h3>` + tbl("Hero", byHero);
+    $("#record").innerHTML = html;
+  }
+
   function renderRecord() {
     const s = sel();
+    if (s.length === 1) return renderSolo(s[0]);
+    $("#rec-h").innerHTML = `<span class="step">1</span>Record together`;
+    $("#exact").closest(".toggle").hidden = false;
     const c = E.comboReport(matches, s);
     const rows = groupRows();
     const perMatch = new Map(); rows.forEach(r => perMatch.set(r.matchId, r));
@@ -115,29 +151,30 @@
   function renderStats() {
     const s = sel();
     const base = state.scope === "group" ? groupRows() : ctx.rows;
+    $("#stats").innerHTML = s.map(m => statTile(m, base.filter(r => r.member === m))).join("");
+  }
+
+  function statTile(m, rows) {
     const cls = x => x >= .5 ? "good" : "bad";
-    $("#stats").innerHTML = s.map(m => {
-      const rows = base.filter(r => r.member === m);
-      const x = E.summarize(rows, T);
-      if (!x.games) return `<div class="tile"><h3>${esc(label(m))}</h3><p class="muted" style="margin:0">No games in this view.</p></div>`;
-      const roles = [...new Set(rows.map(r => r.role))].map(role => [role, E.record(rows.filter(r => r.role === role))]).sort((a, b) => b[1].games - a[1].games);
-      const hs = [...new Set(rows.map(r => r.hero))].map(h => [h, E.record(rows.filter(r => r.hero === h))]).sort((a, b) => b[1].games - a[1].games).slice(0, 5);
-      return `<div class="tile"><h3>${esc(label(m))}</h3>
-        <div class="big">${x.wins}–${x.losses}<small>${pct(x.wr)}</small></div>
-        <div class="kv">
-          <span>K / D / A</span><span>${num(x.k)} / ${num(x.d)} / ${num(x.a)}</span>
-          <span>≤ ${T.maxDeaths} deaths</span><span class="${cls(x.hitDeaths)}">${pct(x.hitDeaths)}</span>
-          <span>≥ ${T.minWards} wards</span><span class="${cls(x.hitWards)}">${pct(x.hitWards)} · avg ${num(x.wards)}</span>
-          <span>Objective dmg</span><span class="${cls(x.hitObj)}">${pct(x.hitObj)} · avg ${num(x.obj, 0)}</span>
-          <span>All 3 targets</span><span>${pct(x.hitAll)}</span>
-          <span>Tower dmg</span><span>${num(x.towers, 0)}</span>
-          <span>Unspent gold</span><span class="${x.unspent > 1500 ? "bad" : ""}">${num(x.unspent, 0)}</span>
-          <span>CS / min</span><span>${num(x.csPerMin)}</span>
-        </div>
-        <div class="tags">${roles.map(([r, rec]) => `<span class="pill"><b>${esc(roleName(r))}</b> ${wl(rec)}</span>`).join("")}</div>
-        <div>${hs.map(([h, rec]) => `<span class="pill">${esc(heroName(h))} ${wl(rec)}</span>`).join("")}</div>
-      </div>`;
-    }).join("");
+    const x = E.summarize(rows, T);
+    if (!x.games) return `<div class="tile"><h3>${esc(label(m))}</h3><p class="muted" style="margin:0">No games in this view.</p></div>`;
+    const roles = [...new Set(rows.map(r => r.role))].map(role => [role, E.record(rows.filter(r => r.role === role))]).sort((a, b) => b[1].games - a[1].games);
+    const hs = [...new Set(rows.map(r => r.hero))].map(h => [h, E.record(rows.filter(r => r.hero === h))]).sort((a, b) => b[1].games - a[1].games).slice(0, 5);
+    return `<div class="tile"><h3>${esc(label(m))}</h3>
+      <div class="big">${x.wins}–${x.losses}<small>${pct(x.wr)}</small></div>
+      <div class="kv">
+        <span>K / D / A</span><span>${num(x.k)} / ${num(x.d)} / ${num(x.a)}</span>
+        <span>≤ ${T.maxDeaths} deaths</span><span class="${cls(x.hitDeaths)}">${pct(x.hitDeaths)}</span>
+        <span>≥ ${T.minWards} wards</span><span class="${cls(x.hitWards)}">${pct(x.hitWards)} · avg ${num(x.wards)}</span>
+        <span>Objective dmg</span><span class="${cls(x.hitObj)}">${pct(x.hitObj)} · avg ${num(x.obj, 0)}</span>
+        <span>All 3 targets</span><span>${pct(x.hitAll)}</span>
+        <span>Tower dmg</span><span>${num(x.towers, 0)}</span>
+        <span>Unspent gold</span><span class="${x.unspent > 1500 ? "bad" : ""}">${num(x.unspent, 0)}</span>
+        <span>CS / min</span><span>${num(x.csPerMin)}</span>
+      </div>
+      <div class="tags">${roles.map(([r, rec]) => `<span class="pill"><b>${esc(roleName(r))}</b> ${wl(rec)}</span>`).join("")}</div>
+      <div>${hs.map(([h, rec]) => `<span class="pill">${esc(heroName(h))} ${wl(rec)}</span>`).join("")}</div>
+    </div>`;
   }
 
   // ---------- 3: suggestions ----------

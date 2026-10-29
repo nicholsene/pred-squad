@@ -313,7 +313,7 @@
     }
     if (weakest && weakest.verdict === "Tough") calls.push(`${ROLE_LABEL[weakest.role]} is our weakest lane — jungler, gank or cover it before 6:00; laner, farm safe under tower.`);
     if (strongest && strongest.verdict === "Favored") calls.push(`${ROLE_LABEL[strongest.role]} is our strongest lane — gank there to snowball, then push its tower after every kill.`);
-    if (threats[0]) calls.push(`Biggest threat: ${nm(threats[0].hero)} (${ROLE_LABEL[threats[0].role]})${threats[0].fed ? " — marked fed" : ""}. Track them on the minimap; if missing, assume they're coming.`);
+    if (threats[0]) calls.push(`Biggest threat: ${nm(threats[0].hero)} (${ROLE_LABEL[threats[0].role]})${threats[0].fed ? " — marked ahead" : ""}. Track them on the minimap; if missing, assume they're coming.`);
     calls.push("After every won fight or objective, push the nearest tower — that's what won your close games.");
 
     const now = clock == null ? null : clock;

@@ -1,6 +1,6 @@
 /* Offline support: app shell is cache-first, data is network-first with the
    last copy kept so the app still opens with the most recent stats offline. */
-const SHELL = "squad-shell-v3";
+const SHELL = "squad-shell-v5";
 const DATA = "squad-data-v1";
 const SHELL_FILES = ["./", "index.html", "style.css", "app.js", "engine.js", "scan.js", "match.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/apple-touch-icon.png"];
