@@ -136,7 +136,8 @@ try{
  // Phone visual/accessibility checks for the deployed design.
  await page.setViewportSize({width:320,height:760});
  await page.evaluate(()=>{document.documentElement.dataset.theme='dark';document.documentElement.classList.add('reduce-motion','solid-surfaces');});
- assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Match must fit a narrow phone');
+ const overflow=await page.evaluate(()=>[...document.querySelectorAll('body *')].filter(el=>el.getClientRects().length&&el.getBoundingClientRect().right>innerWidth+1).slice(0,15).map(el=>({tag:el.tagName,id:el.id,cls:el.className,right:el.getBoundingClientRect().right,text:el.textContent.slice(0,60)})));
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Match must fit a narrow phone: '+JSON.stringify(overflow));
  await page.evaluate(()=>window.scrollTo(0,0));
  await page.screenshot({path:path.resolve(__dirname,'../.test-artifacts/focus-dark-320.png')});
  const artwork=page.locator('#counterbuild .item-art').first();

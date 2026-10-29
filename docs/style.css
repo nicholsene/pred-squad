@@ -537,3 +537,13 @@ body{padding-bottom:110px;line-height:1.5}.ambient{background:radial-gradient(el
 .toast{width:max-content;max-width:calc(100vw - 32px);border-radius:20px;line-height:1.5}
 
 #lifecycle>b{display:block}.lifecycle-actions{display:flex;flex-wrap:wrap;gap:8px}
+
+/* Let evidence and legacy strategy rows wrap with wider system fonts. */
+@media(max-width:420px){
+ .bl-side{white-space:normal;min-width:0;overflow-wrap:anywhere}
+ .bl-head,.sub-row{flex-wrap:wrap}
+ .lane-row{grid-template-columns:54px minmax(0,1fr) auto}
+ .lane-vs,.team-intent-row>div{min-width:0;overflow-wrap:anywhere}
+ .recipe-list>span,.threat-items>span{min-width:0;max-width:100%;overflow-wrap:anywhere}
+ .planrow,.counter-player,.team-strategy{min-width:0}
+}
