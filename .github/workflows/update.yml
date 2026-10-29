@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -38,32 +40,9 @@ jobs:
           else
             echo "flag=--skip-meta" >> "$GITHUB_OUTPUT"
           fi
-      - name: Fetch from pred.gg
-        id: fetch
-        continue-on-error: true
+      - name: Refresh and publish from latest main
         env:
           PREDGG_CLIENT_ID: ${{ secrets.PREDGG_CLIENT_ID }}
           PREDGG_CLIENT_SECRET: ${{ secrets.PREDGG_CLIENT_SECRET }}
           PREDGG_REFRESH_TOKEN: ${{ secrets.PREDGG_REFRESH_TOKEN }}
-        run: |
-          if python scripts/fetch.py ${{ steps.meta.outputs.flag }}; then
-            exit 0
-          fi
-          echo "::warning::Data refresh failed. Retrying once in five minutes."
-          sleep 300
-          python scripts/fetch.py ${{ steps.meta.outputs.flag }}
-      - name: Commit successful datasets and refresh heartbeat
-        if: ${{ !cancelled() && steps.fetch.outcome != 'skipped' }}
-        run: |
-          git config user.name "squad-bot"
-          git config user.email "squad-bot@users.noreply.github.com"
-          git add docs/data
-          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
-          git commit -m "data: update $(date -u +%Y-%m-%dT%H:%MZ)"
-          git pull --rebase origin main
-          git push
-      - name: Report incomplete refresh
-        if: steps.fetch.outcome == 'failure'
-        run: |
-          echo "Successful datasets were published; inspect docs/data/status.json for failed stages."
-          exit 1
+        run: bash scripts/refresh.sh ${{ steps.meta.outputs.flag }}
