@@ -159,11 +159,11 @@
   function renderSetup() {
     const o = S.setup.ours || {}, t = S.setup.theirs || {};
     $("#setup").innerHTML = `<div class="setup-grid">
-      <div class="sg-h"></div><div class="sg-h">Your team</div><div class="sg-h">Enemy</div>
-      ${ROLES.map(r => `<div class="sg-role">${esc(roleName(r))}</div>
+      <div class="sg-row sg-head"><div class="sg-h"></div><div class="sg-h">Your team</div><div class="sg-h">Enemy</div></div>
+      ${ROLES.map(r => `<div class="sg-row"><div class="sg-role">${esc(roleName(r))}</div>
         <div class="sg-cell">${heroSelect(["setup", "ours", r, "hero"], (o[r] || {}).hero, r)}${whoSelect(["setup", "ours", r, "who"], (o[r] || {}).who)}</div>
         <div class="sg-cell">${heroSelect(["setup", "theirs", r, "hero"], (t[r] || {}).hero, r)}
-          <label class="fed"><input type="checkbox" data-path='${JSON.stringify(["setup", "theirs", r, "fed"])}' ${(t[r] || {}).fed ? "checked" : ""}> Ahead</label></div>`).join("")}
+          <label class="fed"><input type="checkbox" data-path='${JSON.stringify(["setup", "theirs", r, "fed"])}' ${(t[r] || {}).fed ? "checked" : ""}> Ahead</label></div></div>`).join("")}
     </div>
     <p class="note" style="margin:8px 0 0">Tick <b>Ahead</b> when an enemy is snowballing (several kills, items ahead of everyone). They jump to the top of the threat list and their lane is flagged, so the squad plays around them.</p>`;
     $("#setup").querySelectorAll("[data-path]").forEach(el => el.onchange = () => setPath(JSON.parse(el.dataset.path), el.type === "checkbox" ? el.checked : el.value));
