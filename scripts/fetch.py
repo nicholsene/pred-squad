@@ -5,6 +5,7 @@ Writes three files into docs/data/:
   matches.json  every match with at least one squad member (incremental)
   meta.json     current-patch hero/role win rates, lane matchups, core builds
   items.json    item catalogue: cost, stats, type
+  ranks.json    ranked ladder (rank name -> points range)
 
 Only squad members are identified in matches.json. Other players are kept
 as hero/role/team/stats with no name or id.
@@ -33,6 +34,9 @@ HEROES_Q = """
 
 VERSIONS_Q = "{ versions { id name releaseDate } }"
 
+# Ranked ladder: points range of every rank, per season split.
+RATINGS_Q = "{ ratings { name group startTime endTime ranks { name ratingMin ratingMax tierIdx divisionIdx } } }"
+
 # Item catalogue: price, stats and type for every item (public data).
 ITEMS_Q = """
 { items { data { name displayName totalPrice price slotType rarity aggressionType class isHidden
@@ -46,6 +50,7 @@ MP_FIELDS = """
   laneMinionsKilled neutralMinionsEnemyJungle neutralMinionsTeamJungle
   totalDamageDealtToObjectives totalDamageDealtToStructures
   inventoryItemData { name } goldEarnedAtInterval
+  rating { points rank { name } }
 """
 
 MATCHES_Q = """
@@ -124,6 +129,14 @@ def pct(x):
 
 
 # ---------------- heroes ----------------
+def fetch_ranks(api: PredGG) -> dict:
+    """The current split's rank ladder (name -> points range)."""
+    rs = [r for r in api.query(RATINGS_Q)["ratings"] if r.get("ranks")]
+    cur = max(rs, key=lambda r: r.get("startTime") or "")
+    ranks = sorted(({"name": k["name"], "min": k["ratingMin"], "max": min(k["ratingMax"], 99999)} for k in cur["ranks"]), key=lambda k: k["min"])
+    return {"season": cur["name"], "ranks": ranks}
+
+
 def fetch_items(api: PredGG) -> list[dict]:
     out = []
     for it in api.query(ITEMS_Q)["items"]:
@@ -195,6 +208,9 @@ def normalise_match(m: dict, squad_ids: dict[str, str]) -> dict:
             "towers": mp.get("totalDamageDealtToStructures", 0),
             "items": [i["name"] for i in (mp.get("inventoryItemData") or []) if i and i.get("name")],
             "goldCurve": mp.get("goldEarnedAtInterval") or [],
+            # rank points going into the match (ranked games only; None otherwise)
+            "rp": (mp.get("rating") or {}).get("points"),
+            "rank": ((mp.get("rating") or {}).get("rank") or {}).get("name"),
         })
     return {
         "id": m["id"],
@@ -232,7 +248,7 @@ def fetch_matches(api: PredGG, existing: dict) -> dict:
                 break
         print(f"  {p['key']}: {new} new matches")
     # backfill matches stored before items/gold curves were collected
-    old = [mid for mid, m in by_id.items() if m["players"] and "items" not in m["players"][0]]
+    old = [mid for mid, m in by_id.items() if m["players"] and not all(k in m["players"][0] for k in ("items", "rp"))]
     for mid in old[:CONFIG.get("backfillPerRun", 150)]:
         try:
             m = api.query(MATCH_Q, {"id": mid}).get("match")
@@ -306,6 +322,10 @@ def main() -> int:
     patch, version_ids = current_patch(api)
     save("heroes.json", {"updatedAt": now_iso(), "patch": patch, "heroes": heroes})
     print(f"  {len(heroes)} heroes, patch {patch}")
+    try:
+        save("ranks.json", {"updatedAt": now_iso(), **fetch_ranks(api)})
+    except PredGGError as e:
+        status["errors"].append(f"ranks: {e}")
     try:
         items = fetch_items(api)
         save("items.json", {"updatedAt": now_iso(), "patch": patch, "items": items})

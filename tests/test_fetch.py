@@ -34,7 +34,8 @@ def fake_match(i):
                         "neutralMinionsTeamJungle": 0, "totalDamageDealtToObjectives": rnd.choice([0, 5000]),
                         "totalDamageDealtToStructures": 3000,
                         "inventoryItemData": [{"name": n} for n in rnd.sample(ITEMS, 5)] + [None],
-                        "goldEarnedAtInterval": [350 + 300 * k for k in range(25)]})
+                        "goldEarnedAtInterval": [350 + 300 * k for k in range(25)],
+                        "rating": {"points": 50 + rnd.randint(0, 250), "rank": {"name": "Bronze II"}}})
     return {"id": f"m{i:04d}", "startTime": f"2026-10-{1 + i % 28:02d}T12:00:00Z", "duration": 1800,
             "gameMode": "RANKED", "winningTeam": rnd.choice(["DAWN", "DUSK"]), "version": {"name": "1.17.2"},
             "matchPlayers": mps}
@@ -80,10 +81,11 @@ def main():
         # items + gold curve kept, empty inventory slots dropped
         p0 = out2["matches"][0]["players"][0]
         assert len(p0["items"]) == 5 and len(p0["goldCurve"]) == 25, p0
+        assert p0["rp"] is not None and p0["rank"] == "Bronze II"
         # matches saved before items existed are backfilled by id
         for m in out2["matches"][-10:]:   # oldest, so paging does not refresh them
             for p in m["players"]:
-                p.pop("items"); p.pop("goldCurve")
+                p.pop("items"); p.pop("goldCurve"); p.pop("rp")
         out3 = fetch.fetch_matches(api, out2)
         assert all("items" in p for m in out3["matches"] for p in m["players"])
         out2 = out3
