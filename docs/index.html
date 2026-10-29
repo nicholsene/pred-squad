@@ -9,6 +9,10 @@
 <meta name="theme-color" content="#eef1f8" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-title" content="Squad">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,7 +29,7 @@
 </header>
 
 <main class="wrap">
-  <section class="card glass" aria-labelledby="rec-h">
+  <section class="card glass" id="tab-record" data-tab="record" aria-labelledby="rec-h">
     <div class="card-head">
       <h2 id="rec-h"><span class="step">1</span>Record together</h2>
       <label class="toggle"><input type="checkbox" id="exact" checked><span class="track"><span class="knob"></span></span><span>Exact group only</span></label>
@@ -33,7 +37,7 @@
     <div id="record"></div>
   </section>
 
-  <section class="card glass" aria-labelledby="stats-h">
+  <section class="card glass" id="tab-stats" data-tab="stats" aria-labelledby="stats-h">
     <div class="card-head">
       <h2 id="stats-h"><span class="step">2</span>Player stats</h2>
       <div class="seg" role="tablist" aria-label="Stat scope">
@@ -45,7 +49,7 @@
     <div id="stats" class="grid"></div>
   </section>
 
-  <section class="card glass" aria-labelledby="sug-h">
+  <section class="card glass" id="tab-picks" data-tab="picks" aria-labelledby="sug-h">
     <div class="card-head">
       <h2 id="sug-h"><span class="step">3</span>Suggested lanes &amp; heroes</h2>
     </div>
@@ -53,7 +57,7 @@
     <div id="suggest"></div>
   </section>
 
-  <section class="card glass" aria-labelledby="plan-h">
+  <section class="card glass" id="tab-plan" data-tab="plan" aria-labelledby="plan-h">
     <div class="card-head">
       <h2 id="plan-h"><span class="step">4</span>Game plan</h2>
     </div>
@@ -64,7 +68,15 @@
   <footer class="foot">Data from <a href="https://pred.gg" rel="noopener">pred.gg</a> · private squad tool</footer>
 </main>
 
+<nav class="tabbar glass" aria-label="Sections">
+  <button data-go="record" class="on" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Record</span></button>
+  <button data-go="stats"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>Stats</span></button>
+  <button data-go="picks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg><span>Picks</span></button>
+  <button data-go="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M9 4a2 2 0 0 0-2 2H5v15h14V6h-2a2 2 0 0 0-2-2M9 12h6M9 16h4"/></svg><span>Plan</span></button>
+</nav>
+
 <script src="engine.js"></script>
 <script src="app.js"></script>
+<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
 </body>
 </html>

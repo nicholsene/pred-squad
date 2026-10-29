@@ -167,7 +167,9 @@
     $("#suggest").querySelectorAll("[data-apply]").forEach(b => b.onclick = () => {
       const l = L[+b.dataset.apply];
       state.plan = Object.fromEntries(s.map(m => [m, { role: l.roles[m], hero: (l.heroes[m][0] || {}).hero || "", opp: "" }]));
-      renderPlan(); document.getElementById("plan-h").scrollIntoView({ behavior: "smooth", block: "start" });
+      renderPlan();
+      if (matchMedia("(max-width: 760px)").matches) window.__showTab("plan");
+      else document.getElementById("plan-h").scrollIntoView({ behavior: "smooth", block: "start" });
     });
     if (!Object.keys(state.plan).length && L[0]) {
       state.plan = Object.fromEntries(s.map(m => [m, { role: L[0].roles[m], hero: (L[0].heroes[m][0] || {}).hero || "", opp: "" }]));
@@ -230,5 +232,19 @@
   }
 
   function render() { renderRecord(); renderStats(); renderSuggest(); renderPlan(); }
+
+  // ---------- phone tabs ----------
+  const tabs = [...document.querySelectorAll(".tabbar button")];
+  function showTab(name, scroll = true) {
+    if (!document.getElementById("tab-" + name)) name = "record";
+    document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("active", s.dataset.tab === name));
+    tabs.forEach(t => { const on = t.dataset.go === name; t.classList.toggle("on", on); on ? t.setAttribute("aria-current", "page") : t.removeAttribute("aria-current"); });
+    try { localStorage.setItem("squad-tab", name); } catch {}
+    if (scroll && matchMedia("(max-width: 760px)").matches) window.scrollTo({ top: 0, behavior: "auto" });
+  }
+  tabs.forEach(t => t.onclick = () => showTab(t.dataset.go));
+  window.__showTab = showTab;
+  showTab((() => { try { return localStorage.getItem("squad-tab"); } catch { return null; } })() || "record", false);
+
   render();
 })();

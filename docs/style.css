@@ -20,6 +20,7 @@
   --glass: rgba(255, 255, 255, 0.56);
   --glass-strong: rgba(255, 255, 255, 0.74);
   --glass-soft: rgba(255, 255, 255, 0.38);
+  --glass-bar: rgba(248, 249, 253, 0.86);
   --edge: rgba(255, 255, 255, 0.75);
   --edge-dim: rgba(13, 18, 32, 0.08);
   --spec: rgba(255, 255, 255, 0.9);
@@ -48,6 +49,7 @@
     --glass: rgba(30, 33, 46, 0.52);
     --glass-strong: rgba(38, 42, 58, 0.72);
     --glass-soft: rgba(255, 255, 255, 0.06);
+    --glass-bar: rgba(22, 24, 34, 0.86);
     --edge: rgba(255, 255, 255, 0.14);
     --edge-dim: rgba(255, 255, 255, 0.08);
     --spec: rgba(255, 255, 255, 0.22);
@@ -60,7 +62,7 @@
   --bg: #07080d; --ink: #f2f4fa; --ink-2: #c9cedb; --muted: #8d95a8;
   --accent: #6c93ff; --accent-2: #a98bff; --accent-ink: #07080d;
   --good: #46d391; --bad: #ff7468; --warn: #f0b84a;
-  --glass: rgba(30, 33, 46, 0.52); --glass-strong: rgba(38, 42, 58, 0.72); --glass-soft: rgba(255, 255, 255, 0.06);
+  --glass: rgba(30, 33, 46, 0.52); --glass-strong: rgba(38, 42, 58, 0.72); --glass-soft: rgba(255, 255, 255, 0.06); --glass-bar: rgba(22, 24, 34, 0.86);
   --edge: rgba(255, 255, 255, 0.14); --edge-dim: rgba(255, 255, 255, 0.08); --spec: rgba(255, 255, 255, 0.22);
   --shadow: 0 1px 1px rgba(0, 0, 0, 0.3), 0 14px 40px -10px rgba(0, 0, 0, 0.6);
   --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.35), 0 24px 50px -12px rgba(0, 0, 0, 0.7);
@@ -319,6 +321,42 @@ details[open] summary::before { transform: rotate(90deg); }
   .assign { grid-template-columns: 1fr; gap: 2px; }
   .assign > div:nth-child(even) { margin-bottom: 8px; }
 }
+
+/* ---------- bottom tab bar (phones) ---------- */
+.tabbar { display: none; }
+@media (max-width: 760px) {
+  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  select { font-size: 16px; } /* stops iOS zooming in on tap */
+  .bar-in { padding: 8px 16px 10px; gap: 8px; }
+  .status { font-size: 11px; }
+  .wrap { padding-top: 12px; }
+  .wrap > section[data-tab] { display: none; }
+  .wrap > section[data-tab].active { display: block; animation: tabin .35s var(--ease) both; }
+  .step { display: none; }
+  h2 { font-size: 22px; letter-spacing: -0.025em; }
+  .card { margin-bottom: 12px; }
+  .foot { padding-bottom: 8px; }
+  .tabbar {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    position: fixed; z-index: 20; left: 12px; right: 12px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    padding: 6px; border-radius: 26px; background: var(--glass-bar);
+  }
+  .tabbar button {
+    position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    border: 0; background: none; padding: 7px 0 6px; border-radius: 20px; cursor: pointer;
+    color: var(--muted); font-size: 11px; font-weight: 600; -webkit-tap-highlight-color: transparent;
+    transition: color .25s var(--ease), background .3s var(--ease), transform .35s var(--spring);
+    min-height: 50px;
+  }
+  .tabbar button:active { transform: scale(.94); }
+  .tabbar svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tabbar button.on { color: var(--accent); background: var(--glass-soft); box-shadow: inset 0 1px 0 var(--spec); }
+  .tabbar button.on svg { stroke-width: 2.1; }
+  .lineup:hover { transform: none; }
+  .planrow h3 { font-size: 17px; }
+}
+@keyframes tabin { from { opacity: 0; transform: translateY(6px); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
