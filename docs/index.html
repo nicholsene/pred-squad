@@ -97,6 +97,10 @@
 <script src="engine.js"></script>
 <script src="scan.js"></script>
 <script src="app.js"></script>
-<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
+<script>if ("serviceWorker" in navigator) {
+  const had = !!navigator.serviceWorker.controller; let done = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !done) { done = true; location.reload(); } });
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js").then(r => r.update()).catch(() => {}));
+}</script>
 </body>
 </html>

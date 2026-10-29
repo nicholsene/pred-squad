@@ -1,6 +1,6 @@
-/* Offline support: app shell is cache-first, data is network-first with the
+/* Offline support: app shell is network-first (cache fallback), data is network-first with the
    last copy kept so the app still opens with the most recent stats offline. */
-const SHELL = "squad-shell-v5";
+const SHELL = "squad-shell-v6";
 const DATA = "squad-data-v1";
 const SHELL_FILES = ["./", "index.html", "style.css", "app.js", "engine.js", "scan.js", "match.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/apple-touch-icon.png"];
@@ -25,9 +25,8 @@ self.addEventListener("fetch", e => {
     }).catch(() => caches.open(DATA).then(c => c.match(key)).then(r => r || Response.error())));
     return;
   }
-  // shell: serve cache, refresh in background
-  e.respondWith(caches.open(SHELL).then(c => c.match(e.request).then(hit => {
-    const net = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
-    return hit || net;
-  })));
+  // shell: network-first so updates show on the next open; cached copy only when offline
+  e.respondWith(caches.open(SHELL).then(c => fetch(e.request, { cache: "no-cache" }).then(r => {
+    if (r.ok) c.put(e.request, r.clone()); return r;
+  }).catch(() => c.match(e.request).then(hit => hit || c.match("index.html")))));
 });
