@@ -238,12 +238,14 @@
     const best = mus.slice().sort((a, b) => b.wr - a.wr).slice(0, 4);
     const worst = mus.slice().sort((a, b) => a.wr - b.wr).slice(0, 4);
     const score = heroScore(ctx.rows, ctx.meta, member, role, hero, selected, opp);
-    let swap = null;
+    let swap = null, laneVs = null;
     if (opp) {
+      // any squad member, any hero, in this lane, against this enemy hero
+      laneVs = record(ctx.rows.filter(r => r.role === role && r.laneOpponents.some(o => o.hero === opp)));
       const alts = suggestHeroes(ctx, member, role, selected, opp, 4).filter(x => x.hero !== hero);
       if (alts.length && alts[0].score - score.score > 0.02) swap = alts[0];
     }
-    return { hero: h, role, meta: m, skillOrder, abilities: h ? h.abilities : [], best, worst, score, swap };
+    return { hero: h, role, meta: m, skillOrder, abilities: h ? h.abilities : [], best, worst, score, swap, laneVs };
   }
 
   const api = {

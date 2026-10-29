@@ -54,17 +54,25 @@ query($id: ID!, $limit: Int, $offset: Int, $modes: [GameMode!]) {
 }
 """ % MP_FIELDS
 
-META_Q = """
-query($slug: String!, $f: HeroGeneralStatisticFilterInput, $mf: HeroMatchupStatisticFilterInput,
-      $bf: HeroCoreBuildFilterInput) {
+# Win rates per hero/role are available to third-party apps.
+META_GENERAL_Q = """
+query($slug: String!, $f: HeroGeneralStatisticFilterInput) {
+  hero(by: {slug: $slug}) { generalStatistic(filter: $f) { result { matchesPlayed matchesWon } } }
+}
+"""
+
+# Lane matchups and core builds were "Forbidden" for third-party apps when this was
+# written (Oct 2026), even with a user-authorised token. Tried once per run; if pred.gg
+# ever grants access they start appearing automatically.
+META_EXTRA_Q = """
+query($slug: String!, $mf: HeroMatchupStatisticFilterInput, $bf: HeroCoreBuildFilterInput) {
   hero(by: {slug: $slug}) {
-    generalStatistic(filter: $f) { result { matchesPlayed matchesWon } }
     matchupStatistic(filter: $mf, metric: WINRATE, isAlly: false, sameRole: true) {
       results { matchupHero { slug } matchesPlayed winrate }
     }
     coreBuild(filter: $bf, limit: 3) {
-      results { core1Item { name data { displayName } } core2Item { name data { displayName } } core3Item { name data { displayName } }
-                matchesPlayedBuildOrder matchesWonBuildOrder }
+      results { core1Item { name data { displayName } } core2Item { name data { displayName } }
+                core3Item { name data { displayName } } matchesPlayedBuildOrder matchesWonBuildOrder }
     }
   }
 }
@@ -198,31 +206,39 @@ def fetch_matches(api: PredGG, existing: dict) -> dict:
 
 # ---------------- meta ----------------
 def fetch_meta(api: PredGG, heroes: list[dict], patch: str, version_ids: list[str]) -> dict:
-    out = {"updatedAt": now_iso(), "patch": patch, "mode": "RANKED", "heroes": {}}
+    out = {"updatedAt": now_iso(), "patch": patch, "mode": "RANKED", "heroes": {},
+           "matchupsAvailable": True}
     modes = ["RANKED"]
     for h in heroes:
         for role in h["roles"]:
             f = {"roles": [role], "versions": version_ids, "gameModes": modes}
-            mf = {**f, "matchupRoles": [role]}
             try:
-                d = api.query(META_Q, {"slug": h["slug"], "f": f, "mf": mf, "bf": f})["hero"]
+                d = api.query(META_GENERAL_Q, {"slug": h["slug"], "f": f})["hero"]
             except PredGGError as e:
                 print(f"  meta {h['slug']}/{role}: {e}")
                 continue
             g = ((d.get("generalStatistic") or {}).get("result")) or {}
             games, wins = g.get("matchesPlayed") or 0, g.get("matchesWon") or 0
-            matchups = [
-                {"hero": r["matchupHero"]["slug"], "games": r["matchesPlayed"], "wr": pct(r["winrate"])}
-                for r in ((d.get("matchupStatistic") or {}).get("results") or [])
-                if r.get("matchupHero")
-            ]
-            builds = []
-            for b in ((d.get("coreBuild") or {}).get("results") or []):
-                items = [((b.get(k) or {}).get("data") or {}).get("displayName") or (b.get(k) or {}).get("name")
-                         for k in ("core1Item", "core2Item", "core3Item")]
-                n, w = b.get("matchesPlayedBuildOrder") or 0, b.get("matchesWonBuildOrder") or 0
-                builds.append({"items": [i for i in items if i], "games": n,
-                               "wr": round(100 * w / n, 2) if n else None})
+            matchups, builds = [], []
+            if out["matchupsAvailable"]:
+                try:
+                    x = api.query(META_EXTRA_Q, {"slug": h["slug"], "mf": {**f, "matchupRoles": [role]}, "bf": f})["hero"]
+                    matchups = [
+                        {"hero": r["matchupHero"]["slug"], "games": r["matchesPlayed"], "wr": pct(r["winrate"])}
+                        for r in ((x.get("matchupStatistic") or {}).get("results") or []) if r.get("matchupHero")
+                    ]
+                    for b in ((x.get("coreBuild") or {}).get("results") or []):
+                        items = [((b.get(k) or {}).get("data") or {}).get("displayName") or (b.get(k) or {}).get("name")
+                                 for k in ("core1Item", "core2Item", "core3Item")]
+                        n, w = b.get("matchesPlayedBuildOrder") or 0, b.get("matchesWonBuildOrder") or 0
+                        builds.append({"items": [i for i in items if i], "games": n,
+                                       "wr": round(100 * w / n, 2) if n else None})
+                except PredGGError as e:
+                    if "Forbidden" in str(e):
+                        out["matchupsAvailable"] = False
+                        print("  matchups/builds not available to this app; skipping them")
+                    else:
+                        print(f"  meta extra {h['slug']}/{role}: {e}")
             out["heroes"].setdefault(h["slug"], {})[role] = {
                 "games": games, "wins": wins,
                 "wr": round(100 * wins / games, 2) if games else None,

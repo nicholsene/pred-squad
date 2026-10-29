@@ -33,7 +33,6 @@ pred.gg's public API serves heroes and patches without an account. **Match histo
 3. In this GitHub repo, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
    - `PREDGG_CLIENT_ID`
    - `PREDGG_CLIENT_SECRET`
-   - `PREDGG_REFRESH_TOKEN` (only if pred.gg requires a user login flow instead of client credentials)
 
 Never commit the secret to the repo.
 
@@ -57,7 +56,8 @@ python scripts/fetch.py      # live fetch (needs the secrets as env vars)
 ```
 
 ## Known gaps
-- The token endpoint (`https://pred.gg/api/oauth2/token`) and grant type come from pred.gg's site code, not documentation. Verify them on the first live run.
-- pred.gg's matchup "winrate" is assumed to be the hero's win rate against the opponent. Check one value against the pred.gg site.
+- **Tested Oct 29, 2026:** app key (`client_credentials`, Basic auth at `https://pred.gg/api/oauth2/token`) can read match history and per-hero win rates.
+- **Lane matchups and core builds are blocked ("Forbidden") for outside apps,** even with a user-approved token. Matchup advice therefore uses your own squad games against that hero. If pred.gg opens access, the fetcher picks it up automatically.
+- Game modes pulled: RANKED and STANDARD (Quick Match). Edit `gameModes` in `config/squad.json` to change.
 - Lane opponent = enemy in the same role. Carry and support also count each other's duo partner.
 - Button labels assume the default PS5 layout (R2 basic, L1 primary, L2 secondary, R1 alternate, L1+R1 ultimate).

@@ -183,8 +183,12 @@
     lines.push(ev.join(" · ") + ".");
     if (p.opp) {
       if (sc.matchup) lines.push(`Vs <b>${esc(heroName(p.opp))}</b>: meta ${(sc.matchup.wr * 100).toFixed(1)}% over ${num(sc.matchup.games, 0)} games.`);
-      else lines.push(`No meta matchup data vs ${esc(heroName(p.opp))}.`);
-      if (sc.vsOpp && sc.vsOpp.games) lines.push(`Your record vs ${esc(heroName(p.opp))} on this hero: ${sc.vsOpp.wins}–${sc.vsOpp.losses}.`);
+      else lines.push(meta && meta.matchupsAvailable === false
+        ? `pred.gg doesn't share lane-matchup stats with outside apps, so this uses your squad's own games vs ${esc(heroName(p.opp))}.`
+        : `No meta matchup data vs ${esc(heroName(p.opp))}.`);
+      if (sc.vsOpp && sc.vsOpp.games) lines.push(`${esc(label(m))} on this hero vs ${esc(heroName(p.opp))}: ${sc.vsOpp.wins}–${sc.vsOpp.losses}.`);
+      if (b.laneVs && b.laneVs.games) lines.push(`Squad in ${esc(E.ROLE_LABEL[p.role])} vs ${esc(heroName(p.opp))} (any hero): ${b.laneVs.wins}–${b.laneVs.losses}.`);
+      else lines.push(`No squad games in ${esc(E.ROLE_LABEL[p.role])} against ${esc(heroName(p.opp))} yet.`);
       if (b.swap) lines.push(`<span class="warn">Consider <b>${esc(heroName(b.swap.hero))}</b> instead (~${pct(b.swap.score)}).</span>`);
     }
     const skills = b.skillOrder.length ? `<h3 style="margin-top:12px">Level-up order</h3><div class="skills">${b.skillOrder.map(s =>
