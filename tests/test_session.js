@@ -22,3 +22,8 @@ const h=P.mapping([{x:10,y:20},{x:110,y:20},{x:110,y:70},{x:10,y:70}]);
 assert(Math.abs(h[0]-100)<1e-6 && Math.abs(h[4]-50)<1e-6 && Math.abs(h[2]-10)<1e-6);
 assert.throws(()=>P.mapping([{x:0,y:0},{x:0,y:0},{x:0,y:0},{x:0,y:0}]));
 console.log("ok: perspective mapping and degenerate corner rejection");
+
+assert.deepEqual(Scan.candidates([[{t:"36",c:90}]]).map(x=>x.seconds),[36]);
+assert.equal(Scan.candidates([[{t:"2m+",c:90}]])[0].seconds,null);
+assert.equal(Scan.candidates([[{t:"2m+",c:90}]])[0].minSeconds,120);
+console.log("ok: seconds-only minimap counters and approximate timer rejection");

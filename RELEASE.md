@@ -54,3 +54,11 @@ The assisted workflow requires selecting four display corners; it is not automat
 Unresolved hero positions are left blank. Original-photo numeric reads are retained, corrected crops fill unread fields, and disagreements are highlighted for review. This set was used during implementation; these are development-set results, not held-out accuracy claims. Minimap photos were not included.
 
 To reproduce locally: set OCR_PHOTOS to the private image folder, OCR_RECTIFY=1, then run node tests/benchmark_ocr.cjs. The label file includes manually marked display corners to reproduce the four-tap preparation step. Raw benchmark results and corrected crops are saved only under ignored .test-artifacts/.
+
+## HUD references and screen-on verification
+
+Camera guides include full gameplay HUD, minimap-only, loading screen and scoreboard modes. Full-HUD map/clock boxes are approximate because HUD scale and platform can vary. The user confirms the timer crop after capture.
+
+Omeda's V1.11.2 minimap examples show numeric jungle counters, including seconds-only and `2m+` labels: https://www.predecessorgame.com/en-US/news/patch-notes/v1-11-2-patch-notes . The timer reader accepts exact seconds and m:ss; approximate labels never become an exact respawn time. Reference images remain outside the repository.
+
+Screen-on reports an active lock only after the browser grants it; leaving Match or backgrounding suspends it, returning reacquires when requested, and a failed request offers Retry. Unsupported browsers have a clear unavailable state. Browser tests simulate acquisition, tab departure, reacquisition and manual off. Actual device OS power-saving policies can still release a browser wake lock.

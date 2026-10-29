@@ -368,6 +368,7 @@
   function showTab(name, scroll = true) {
     if (!document.getElementById("tab-" + name)) name = "record";
     document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("active", s.dataset.tab === name));
+    document.dispatchEvent(new CustomEvent("squad:tab", {detail:name}));
     tabs.forEach(t => { const on = t.dataset.go === name; t.classList.toggle("on", on); on ? t.setAttribute("aria-current", "page") : t.removeAttribute("aria-current"); });
     try { localStorage.setItem("squad-tab", name); } catch {}
     if (scroll && matchMedia("(max-width: 760px)").matches) window.scrollTo({ top: 0, behavior: "auto" });

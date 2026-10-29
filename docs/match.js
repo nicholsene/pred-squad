@@ -131,7 +131,7 @@
       const u = new URL(location.href); u.searchParams.set("room", code); history.replaceState(null, "", u);
       store.set("squad-room", code);
       render(); renderRoom();
-      if (!wake.on) wake.enable(); // live match → keep screen on by default
+      if (!wake.on && store.get("squad-wake",null)!==false) wake.enable();
     } catch (e) { setRoomStatus(""); toast("Couldn't connect: " + (e.message || e)); }
   }
   function leaveRoom(silent) {
@@ -148,21 +148,39 @@
   function setRoomStatus(t) { const el = $("#room-status"); if (el) el.textContent = t; }
 
   // ---------- wake lock ----------
+  const matchVisible=()=>document.visibilityState==="visible"&&(!matchMedia("(max-width:760px)").matches||$("#tab-match").classList.contains("active"));
   const wake = {
-    on: false, lock: null,
+    on: store.get("squad-wake",false), lock:null, pending:false, error:"",
     supported: "wakeLock" in navigator,
     async enable() {
-      if (!this.supported) return toast("This browser can't keep the screen on — update iOS/Chrome, or raise auto-lock in Settings");
-      try { this.lock = await navigator.wakeLock.request("screen"); this.on = true; this.lock.addEventListener("release", () => { this.lock = null; }); }
-      catch (e) { this.on = false; toast("Screen-on was blocked: " + e.message); }
-      store.set("squad-wake", this.on); renderWake();
+      if(!this.supported){this.on=false;renderWake();return toast("Screen-on is unavailable in this browser. Adjust device auto-lock or try a supported browser.");}
+      this.on=true;store.set("squad-wake",true);
+      if(this.pending||this.lock||!matchVisible()){renderWake();return;}
+      this.pending=true;this.error="";renderWake();
+      try {
+        const lock=await navigator.wakeLock.request("screen");
+        if(!this.on||!matchVisible()){await lock.release();return;}
+        this.lock=lock;
+        lock.addEventListener("release",()=>{if(this.lock===lock)this.lock=null;renderWake();});
+      }catch(e){this.error="Browser could not keep the screen on. Retry while Match is visible.";}
+      finally{this.pending=false;renderWake();}
     },
-    disable() { this.on = false; if (this.lock) this.lock.release().catch(() => {}); this.lock = null; store.set("squad-wake", false); renderWake(); },
+    suspend(){const lock=this.lock;this.lock=null;if(lock)lock.release().catch(()=>{});renderWake();},
+    disable(){this.on=false;this.error="";store.set("squad-wake",false);this.suspend();},
   };
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && wake.on && !wake.lock) wake.enable(); });
+  document.addEventListener("visibilitychange",()=>{
+    if(matchVisible()&&wake.on&&!wake.lock)wake.enable();else if(!matchVisible())wake.suspend();
+  });
+  document.addEventListener("squad:tab",()=>{
+    if(matchVisible()&&wake.on&&!wake.lock)wake.enable();else if(!matchVisible())wake.suspend();
+  });
   function renderWake() {
-    const t = $("#wake"); if (!t) return;
-    t.checked = wake.on; $("#wake-note").textContent = wake.supported ? (wake.on ? "Screen stays on while this page is open" : "") : "Not supported on this browser";
+    const t=$("#wake"),note=$("#wake-note");if(!t||!note)return;
+    t.checked=!!wake.on;t.disabled=!wake.supported;
+    note.textContent=!wake.supported?"Screen-on isn't supported by this browser.":wake.lock&&!wake.lock.released?"Screen stays on while Match is visible.":wake.pending?"Requesting screen-on…":wake.on?(wake.error||"Screen-on paused. Return to Match or retry to resume."):"Screen-on is off.";
+    if(wake.supported&&wake.on&&!wake.lock&&!wake.pending&&matchVisible()){
+      const b=document.createElement("button");b.type="button";b.className="chip ghost";b.textContent="Retry screen-on";b.onclick=()=>wake.enable();note.append(" ",b);
+    }
   }
 
   // ---------- clock ----------
@@ -406,7 +424,7 @@
       }
       const next=M.start(S,me,Date.now());
       commit([{path:["stage"],value:next.stage},{path:["clock"],value:next.clock}]);
-      if(wake.supported)wake.enable();
+      if(wake.supported && store.get("squad-wake",null)!==false)wake.enable();
     }catch(e){toast(e.message);}
   }
   function renderLifecycle() {
@@ -516,8 +534,8 @@
       if(!crop?.w||!crop?.h)return toast("Drag a box around the countdown first.");
       $("#map-message").textContent="Reading timer on this device…";
       const hits=await window.MinimapScan.scan(file,crop);
-      $("#map-time").value=hits.length===1?hits[0].text:"";
-      $("#map-message").textContent=hits.length===1?`Read ${hits[0].text}. Verify against the image before applying.`:hits.length?"Multiple times found. Tighten the crop or enter the visible countdown.":"No clear countdown found. Enter the visible countdown or try a tighter crop.";
+      $("#map-time").value=hits.length===1&&!hits[0].estimated?hits[0].text:"";
+      $("#map-message").textContent=hits.length===1&&hits[0].estimated?`The game shows ${hits[0].text} (at least ${Math.floor(hits[0].minSeconds/60)} minutes). Wait for an exact countdown or enter one you can verify.`:hits.length===1?`Read ${hits[0].text}. Verify against the image before applying.`:hits.length?"Multiple times found. Tighten the crop or enter the visible countdown.":"No clear countdown found. Enter the visible countdown or try a tighter crop.";
     });
     $("#map-cancel").onclick=()=>{image.close();el.hidden=true;};
     $("#map-apply").onclick=()=>{const seconds=M.parseTime($("#map-time").value);if(seconds==null||seconds>1200)return toast("Enter a valid countdown from 0:00 to 20:00.");const observation=M.parseTime($("#map-observed").value);if(observation==null||observation>clockSec()+10)return toast("Check the match time shown in your screenshot.");recordObjective($("#map-objective").value,"countdown",seconds,"confirmed minimap scan",observation);image.close();el.hidden=true;};
@@ -540,7 +558,7 @@
     $("#camera-open").onclick = () => {
       if(scanBusy)return toast("Wait for the current scan to finish.");
       window.CameraScan.open("loading",(kind,canvas)=>{
-        if(kind==="minimap") { canvas.toBlob(blob=>{if(blob)openMap(blob);},"image/png"); }
+        if(kind==="minimap" || kind==="hud") { canvas.toBlob(blob=>{if(blob)openMap(blob);},"image/png"); }
         else exclusiveScan(()=>kind==="loading"?runScan(canvas):runBoardScan(canvas));
       },toast);
     };
@@ -552,7 +570,7 @@
     renderWake(); renderRoom(); render();
     const q = new URLSearchParams(location.search).get("room") || store.get("squad-room", null);
     if (q && !window.SquadHandoff?.pending) joinRoom(q, false);
-    if (store.get("squad-wake", false)) document.addEventListener("pointerdown", () => wake.on || wake.enable(), { once: true }); // needs a user gesture
+    if(wake.on)wake.enable();
     clearInterval(tick); tick = setInterval(() => {
       if(document.visibilityState !== "visible") return;
       if(S.clock?.startedAt) { renderLive(); renderObjectives(); if(Math.floor(clockSec())%15===0){renderStrategy();renderBoard();} }
