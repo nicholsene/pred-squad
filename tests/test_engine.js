@@ -71,3 +71,44 @@ assert(plan.lanes.find(l => l.role === "OFFLANE").ev.matchup, "meta matchup used
 const empty2 = E.matchPlan(E.context([], heroes, null), {}, {}, null, {});
 assert.strictEqual(empty2.lanes.length, 5);
 console.log("ok: match plan", plan.calls.length, "calls; threats", plan.threats.map(t => t.hero).join(","));
+
+// ---------- scoreboard -> game state ----------
+const mk = a => a.map(([hero, lvl, k, d, a2, gold]) => ({ hero, lvl, k, d, a: a2, gold }));
+const board = {
+  ours: mk([["terra", 18, 0, 7, 3, 15862], ["aurora", 18, 2, 11, 3, 15614], ["argus", 18, 4, 7, 4, 17920], ["zinx", 18, 2, 1, 5, 20593], ["revenant", 18, 9, 6, 6, 23301]]),
+  theirs: mk([["zarus", 18, 11, 1, 0, 26771], ["khaimera", 18, 13, 2, 8, 23612], ["bayle", 18, 5, 5, 8, null], ["lt-belica", 18, 1, 5, 8, 19849], ["eden", 18, null, null, null, 16439]]),
+};
+const bs = E.boardState(board, { ours: { OFFLANE: { who: "stealinNICKELS" } } });
+assert(bs.goldDiff < -5000, "one unread enemy gold must not flip the team gold call");
+assert(bs.goldEstimated);
+assert.deepStrictEqual(bs.fed.map(f => f.hero), ["zarus", "khaimera"]);
+assert(bs.calls[0].level === "bad" && /Behind/.test(bs.calls[0].text));
+assert(bs.calls.some(c => /stealinNICKELS/.test(c.text) && /fight next to your team/.test(c.text)), "late-game wording");
+assert.strictEqual(E.boardState(null, {}), null);
+console.log("ok: board state", bs.calls.length, "calls");
+
+// ---------- item lab ----------
+const IL = require("../docs/itemlab.js");
+const items = [
+  { name: "Long Sword", label: "Long Sword", cost: 1000, slot: "PASSIVE", rarity: "RARE", type: "OFFENSE", stats: { PHYSICAL_POWER: 25 } },
+  { name: "Ruby", label: "Ruby", cost: 900, slot: "PASSIVE", rarity: "RARE", type: "DEFENSE", stats: { HEALTH: 250 } },
+  { name: "Plate", label: "Plate", cost: 800, slot: "PASSIVE", rarity: "RARE", type: "DEFENSE", stats: { PHYSICAL_ARMOR: 25 } },
+  { name: "Wand", label: "Wand", cost: 900, slot: "PASSIVE", rarity: "RARE", type: "OFFENSE", stats: { MAGICAL_POWER: 30 } },
+  { name: "Leech", label: "Leech", cost: 2800, slot: "PASSIVE", rarity: "EPIC", type: "SUSTAIN", stats: { PHYSICAL_POWER: 40, LIFESTEAL: 15 } },
+  { name: "Rot", label: "Rot", cost: 2800, slot: "PASSIVE", rarity: "EPIC", type: "ANTI_HEAL", stats: { PHYSICAL_POWER: 45 } },
+  { name: "Rot Staff", label: "Rot Staff", cost: 2800, slot: "PASSIVE", rarity: "EPIC", type: "ANTI_HEAL", stats: { MAGICAL_POWER: 60 } },
+  { name: "Wall", label: "Wall", cost: 2700, slot: "PASSIVE", rarity: "EPIC", type: "DEFENSE", stats: { HEALTH: 300, PHYSICAL_ARMOR: 40 } },
+];
+const IM = fx.matches.map((m, i) => ({ ...m, players: m.players.map((p, j) => ({ ...p,
+  items: (j + i) % 3 === 0 ? ["Leech", "Long Sword"] : (j + i) % 3 === 1 ? ["Rot", "Wall"] : ["Rot Staff", "Wand"] })) }));
+const lab = IL.build(items, IM, heroes);
+assert(Math.abs(lab.price.PHYSICAL_POWER - 40) < 2, "stat price fitted from components: " + lab.price.PHYSICAL_POWER);
+assert(Math.abs(lab.eff["Long Sword"] - 1) < 0.05);
+assert.strictEqual(lab.counters.length, IL.THREATS.length);
+for (const c of lab.counters) assert.strictEqual(c.answered.games + c.unanswered.games > 0, c.answered.games + c.unanswered.games > 0);
+const mi = IL.memberItems(lab, IM, "stealinNICKELS", 1);
+assert(mi.games > 0 && mi.items.length > 0);
+const rsp = IL.respond(lab, [{ hero: "khaimera", items: ["Leech", "Leech"] }, { hero: "crunch", items: ["Leech"] }], [{ who: "stealinNICKELS", hero: "greystone" }, { who: "DiMu", hero: "aurora" }]);
+const heal = rsp.calls.find(c => c.threat.key === "heal");
+assert(heal && heal.pick && /Rot/.test(heal.pick.item.label), "heavy lifesteal should call for anti-heal");
+console.log("ok: item lab", Object.keys(lab.price).length, "stat prices;", rsp.calls.length, "respond calls");

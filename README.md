@@ -30,6 +30,10 @@ An enemy laner shifts the estimate by that matchup's meta win rate and by your o
 - **Live room**: *Start live match* gives a 5-letter code and a share link. Everyone who opens it sees the same lineup, clock and tracker; any player can change heroes, mark an enemy as fed, or log their deaths, wards and objective damage, and the strategy updates for everyone. Rooms are stored in a free Supabase project (`rooms` table, `patch_room` RPC, realtime) and are cleared after 3 days.
 - **Strategy**: per-lane favored/even/tough estimates, the biggest threats (fed first), jungle and push calls, objective timers, and each player's rules (behind-mode at 3 deaths, ward pace, objective reminder).
 
+- **Scan scoreboard** (Match tab): snap the in-game scoreboard when you're dead. It reads every player's level, K/D/A and gold (hero names too if the lineup isn't set), updates squad deaths, marks snowballing enemies as *Ahead*, and puts "right now" calls at the top of the strategy for everyone in the room. Digits are matched against templates of the game's font (`docs/sb-digits.json`), so it's quick and doesn't need a server. Tested on 6 end-of-match photos: 54/60 heroes, 56/60 levels, 170/180 K/D/A, 51/60 gold.
+- **Build to answer them** (Match tab): from what the enemy heroes build in your stored matches (or their actual items), works out what they lean on (healing, shields, tankiness, physical/magic damage, crit, burst) and gives one of you the counter item, picking items your hero's players actually buy. Each call shows how teams facing that threat did with and without the answer.
+- **Item lab** (Stats tab): items each of you wins and loses more with, defensive items vs results, the counter matrix over every team in your matches, and stat value per gold for every item this patch.
+
 ## Setup
 
 ### 1. pred.gg API access (one time)

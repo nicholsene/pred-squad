@@ -47,6 +47,7 @@
       </div>
     </div>
     <div id="stats" class="grid"></div>
+    <div id="itemlab"></div>
   </section>
 
   <section class="card glass" id="tab-picks" data-tab="picks" aria-labelledby="sug-h">
@@ -78,6 +79,13 @@
 
     <div class="sub-h">Live</div>
     <div id="clock" class="tile clock"></div>
+    <div class="board-tools">
+      <label class="chip cta scan-btn"><input type="file" id="board-file" accept="image/*" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Scan scoreboard</label>
+      <span class="muted" style="font-size:12px">Dead? Snap the scoreboard — updates levels, K/D/A, gold and the plan for everyone.</span>
+    </div>
+    <div id="board-progress" class="scan-progress" hidden><div class="bar-meter"><i></i></div><span class="muted"></span></div>
+    <div id="board"></div>
     <div id="tracker"></div>
 
     <div class="sub-h">Strategy</div>
@@ -95,6 +103,7 @@
 </nav>
 
 <script src="engine.js"></script>
+<script src="itemlab.js"></script>
 <script src="scan.js"></script>
 <script src="app.js"></script>
 <script>if ("serviceWorker" in navigator) {

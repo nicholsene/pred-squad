@@ -229,4 +229,6 @@
   function median(a) { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; }
 
   root.LoadingScan = { scan, _lev: lev };
+  // shared with the in-match scoreboard scanner
+  root.ScanKit = { toCanvas, prep, words, lev, getWorker };
 })(typeof window !== "undefined" ? window : globalThis);

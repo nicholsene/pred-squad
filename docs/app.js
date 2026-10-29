@@ -12,13 +12,18 @@
     try { const r = await fetch(`data/${name}?v=${Date.now()}`); if (!r.ok) throw 0; return await r.json(); }
     catch { return fallback; }
   }
-  const [squad, heroesF, matchesF, meta, status] = await Promise.all([
+  const [squad, heroesF, matchesF, meta, status, itemsF] = await Promise.all([
     load("squad.json", { players: [], targets: {} }),
     load("heroes.json", { heroes: [] }),
     load("matches.json", { matches: [] }),
     load("meta.json", null),
     load("status.json", null),
+    load("items.json", { items: [] }),
   ]);
+  // item lab is built on first use (~0.4s); counters use every stored match for a bigger sample
+  let lab = null;
+  const getLab = () => lab || (window.ItemLab && (itemsF.items || []).length && allMatches.some(m => m.players.some(p => p.items))
+    ? (lab = window.ItemLab.build(itemsF.items, allMatches, heroes)) : null);
   const heroes = heroesF.heroes || [];
   const allMatches = matchesF.matches || [];
   // Ranked-only filter (per device). Everything downstream reads `matches` / `ctx`.
@@ -172,6 +177,45 @@
     const s = sel();
     const base = state.scope === "group" ? groupRows() : ctx.rows;
     $("#stats").innerHTML = s.map(m => statTile(m, base.filter(r => r.member === m))).join("");
+    renderItemLab();
+  }
+
+  // ---------- item lab ----------
+  function renderItemLab() {
+    const el = $("#itemlab"); const L = getLab();
+    if (!L) { el.innerHTML = ""; return; }
+    const IL = window.ItemLab, s = sel();
+    const itemName = n => (L.C[n] || {}).label || n;
+    const rec = x => `${x.wins}–${x.games - x.wins}`;
+    const members = s.map(m => {
+      const r = IL.memberItems(L, matches, m);
+      if (!r.games) return "";
+      const up = r.items.filter(x => x.lift > 0.03).slice(0, 4), down = r.items.filter(x => x.lift < -0.03).slice(-4).reverse();
+      const pill = (x, cls) => `<span class="pill ${cls}" title="${x.games} games">${esc(x.label)} <b>${rec(x)}</b></span>`;
+      return `<div class="tile"><h3>${esc(label(m))}</h3>
+        <div class="muted" style="font-size:12px">${r.games} games, ${pct(r.base)} overall. Items in at least 4 of them:</div>
+        <div class="sub-h">Wins more with</div><div>${up.length ? up.map(x => pill(x, "good")).join("") : '<span class="muted">Nothing stands out yet.</span>'}</div>
+        <div class="sub-h">Loses more with</div><div>${down.length ? down.map(x => pill(x, "bad")).join("") : '<span class="muted">Nothing stands out yet.</span>'}</div>
+        <div class="sub-h">Defensive items in final build</div><div>${r.style.filter(x => x.games).map(x => `<span class="pill">${esc(x.label)} <b>${x.wins}–${x.games - x.wins}</b></span>`).join("")}</div>
+      </div>`;
+    }).join("");
+    const counters = L.counters.map(c => {
+      const a = c.answered, b = c.unanswered, wr = x => x.games ? pct(x.wins / x.games) : "—";
+      const verdict = Math.min(a.games, b.games) < 8 ? '<span class="muted">too few games</span>'
+        : c.lift > 0.04 ? '<span class="good">answering helped</span>' : c.lift < -0.04 ? '<span class="bad">answering didn\'t help</span>' : '<span class="muted">no clear difference</span>';
+      return `<tr><td><b>${esc(c.label)}</b><br><span class="muted">answer: ${esc(c.answer)}</span></td><td class="num">${rec(a)}<br><span class="muted">${wr(a)}</span></td><td class="num">${rec(b)}<br><span class="muted">${wr(b)}</span></td><td>${verdict}</td></tr>`;
+    }).join("");
+    const value = Object.values(L.C).filter(i => L.core(i.name) && !i.hidden && L.eff[i.name]).map(i => ({ i, e: L.eff[i.name] })).sort((a, b) => b.e - a.e);
+    const vrow = x => `<span class="pill">${esc(x.i.label)} <b>${Math.round(x.e * 100)}%</b> <span class="muted">${num(x.i.cost, 0)}g</span></span>`;
+    el.innerHTML = `<div class="sub-h">Item lab</div>
+      <div class="grid">${members}</div>
+      <div class="sub-h">Counter matrix — all ${L.teamGames.length} team-games in your matches</div>
+      <p class="note">When the enemy leaned hard on something (top 40% of games), did the teams that bought the answer win more? Uses final builds of all 10 players, so it shows patterns, not proof: losing teams finish with fewer items.</p>
+      <div class="scroll"><table class="fit cm"><thead><tr><th>Enemy leaned on</th><th class="num">With</th><th class="num">Without</th><th>Read</th></tr></thead><tbody>${counters}</tbody></table></div>
+      <div class="sub-h">Stat value per gold, this patch</div>
+      <p class="note">Gold worth of an item's stats divided by its price (100% = fair). Passives aren't counted, so this flags cheap stat-sticks, not the best item.</p>
+      <div><span class="muted" style="font-size:12px">Most value:</span> ${value.slice(0, 6).map(vrow).join("")}</div>
+      <div style="margin-top:6px"><span class="muted" style="font-size:12px">Least (you pay for the passive):</span> ${value.slice(-4).reverse().map(vrow).join("")}</div>`;
   }
 
   function statTile(m, rows) {
@@ -286,6 +330,6 @@
   render();
 
   // hand shared pieces to the live-match module
-  window.__app = { ctx, heroes, squad, meta, T, esc, pct, wl, heroName, label, renderBrief };
+  window.__app = { ctx, heroes, squad, meta, T, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
   const ms = document.createElement("script"); ms.src = "match.js"; document.body.appendChild(ms);
 })();

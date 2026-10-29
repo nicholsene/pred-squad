@@ -13,7 +13,7 @@
   const ROLES = E.ROLES;
 
   // ---------- state ----------
-  const blank = () => ({ setup: { ours: {}, theirs: {} }, live: {}, clock: {} });
+  const blank = () => ({ setup: { ours: {}, theirs: {} }, live: {}, clock: {}, board: null });
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -126,6 +126,58 @@
     } catch (e) { txt.textContent = "Scan failed: " + (e.message || e); }
   }
 
+  // ---------- scoreboard scan (mid-match) ----------
+  let sbLib = null;
+  const loadScoreboard = () => sbLib ||= (window.ScoreboardScan ? Promise.resolve() : new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = "scoreboard.js"; s.onload = res; s.onerror = () => rej(new Error("Couldn't load the scoreboard reader")); document.head.appendChild(s);
+  }));
+  async function runBoardScan(file) {
+    const box = $("#board-progress"); box.hidden = false;
+    const bar = box.querySelector("i"), txt = box.querySelector("span");
+    try {
+      await loadScoreboard();
+      const known = { L: ROLES.map(r => (S.setup.ours[r] || {}).hero || null), R: ROLES.map(r => (S.setup.theirs[r] || {}).hero || null) };
+      const res = await window.ScoreboardScan.scan(file, { heroes: A.heroes, known, onProgress: (m, f) => { txt.textContent = m; bar.style.width = Math.round(f * 100) + "%"; } });
+      if (!res.ours.length) { txt.textContent = res.issues.join(" "); return; }
+      const board = { at: Date.now(), clock: clockSec(), ours: res.ours, theirs: res.theirs };
+      // fill any heroes the lineup didn't have yet
+      const setup = JSON.parse(JSON.stringify(S.setup));
+      ROLES.forEach((r, i) => {
+        if (res.ours[i] && res.ours[i].hero && !(setup.ours[r] || {}).hero) setup.ours[r] = Object.assign({}, setup.ours[r], { hero: res.ours[i].hero });
+        if (res.theirs[i] && res.theirs[i].hero && !(setup.theirs[r] || {}).hero) setup.theirs[r] = Object.assign({}, setup.theirs[r], { hero: res.theirs[i].hero });
+      });
+      // enemies who are clearly snowballing get marked "Ahead" (never un-marked automatically)
+      const st = E.boardState(board, setup, A.T);
+      for (const f of st.fed) setup.theirs[f.role] = Object.assign({}, setup.theirs[f.role], { fed: true });
+      // squad deaths come straight off the board
+      const live = JSON.parse(JSON.stringify(S.live || {}));
+      ROLES.forEach((r, i) => { const who = (setup.ours[r] || {}).who; if (who && res.ours[i] && res.ours[i].d != null) live[who] = Object.assign({}, live[who], { deaths: res.ours[i].d }); });
+      setPath(["setup"], setup); setPath(["live"], live); setPath(["board"], board);
+      txt.textContent = res.issues.length ? res.issues.join(" ") : "Scoreboard read — the plan below is updated for everyone.";
+      bar.style.width = "100%";
+    } catch (e) { txt.textContent = "Scan failed: " + (e.message || e); }
+  }
+
+  function renderBoard() {
+    const el = $("#board"); if (!el) return;
+    const b = S.board;
+    if (!b || !b.ours) { el.innerHTML = ""; return; }
+    const st = E.boardState(b, S.setup, A.T, heroName);
+    const ago = Math.max(0, Math.round((Date.now() - b.at) / 60000));
+    const kda = r => r.k == null ? "—" : `${r.k}/${r.d ?? "?"}/${r.a ?? "?"}`;
+    const g = x => x == null ? "—" : `${(x / 1000).toFixed(1)}k`;
+    const diff = (x, unit, digits = 0) => x == null ? "" : `<span class="${x > 0 ? "good" : x < 0 ? "bad" : "muted"}">${x > 0 ? "+" : x < 0 ? "−" : "±"}${Math.abs(x).toFixed(digits)}${unit}</span>`;
+    const side = (hero, r) => `<span class="bl-side"><b>${esc(hero ? heroName(hero) : "—")}</b> <span class="muted">L${r.lvl ?? "?"} · ${kda(r)} · ${g(r.gold)}</span></span>`;
+    const rows = st.lanes.map(l => `<div class="bl-row"><div class="bl-head"><b>${esc(roleName(l.role))}</b>${l.who ? ` <span class="muted">${esc(label(l.who))}</span>` : ""}
+        <span class="bl-gap">${diff(l.lvlDiff, " lv")}${l.goldDiff == null ? "" : " · " + diff(l.goldDiff / 1000, "k", 1)}</span></div>
+      <div class="bl-vs">${side(l.hero, l.o)}<span class="muted">vs</span>${side(l.opp, l.e)}</div></div>`).join("");
+    el.innerHTML = `<div class="tile board">
+      <div class="board-head"><b>Scoreboard</b> <span class="muted">${b.clock != null ? `at ${fmt(b.clock)} · ` : ""}${ago ? `${ago} min ago` : "just now"}</span>
+        <span class="board-tot">Gold ${st.goldDiff == null ? "—" : (st.goldEstimated ? "≈" : "") + diff(st.goldDiff / 1000, "k", 1)} · Kills ${st.us.kills}–${st.them.kills} · Avg level ${st.lvlDiff == null ? "—" : diff(st.lvlDiff, "", 1)}</span></div>
+      <div class="bl">${rows}</div>
+      <p class="note" style="margin:6px 0 0">Wrong number? Rescan, or fix deaths in the tracker below.</p></div>`;
+  }
+
   // ---------- render ----------
   function heroSelect(path, current, role) {
     const list = A.heroes.filter(h => !role || (h.roles || []).includes(role) || h.slug === current);
@@ -220,12 +272,35 @@
     });
     // put "me" first
     const order = Object.keys(plan.members).sort((a, b) => (b === me) - (a === me));
-    $("#strategy").innerHTML = `<div class="calls">${plan.calls.map(c => `<div class="call">${esc(c)}</div>`).join("")}</div>
+    // scoreboard calls come first: they are the freshest information
+    const st = S.board ? E.boardState(S.board, S.setup, A.T, heroName) : null;
+    const boardCalls = st ? st.calls.map(c => `<div class="call c-${c.level}">${esc(c.text)}</div>`).join("") : "";
+    // build answers to what the enemy is building / likely to build
+    let builds = "";
+    const L = A.lab && A.lab();
+    if (L) {
+      const enemy = ROLES.map((r, i) => ({ hero: (S.setup.theirs[r] || {}).hero, ahead: !!(S.setup.theirs[r] || {}).fed }));
+      const ours = ROLES.map(r => S.setup.ours[r] || {}).filter(o => o.who && o.hero).map(o => ({ who: o.who, hero: o.hero, deaths: (S.live[o.who] || {}).deaths || 0 }));
+      if (ours.length && enemy.some(e => e.hero)) {
+        const res = window.ItemLab.respond(L, enemy, ours);
+        builds = res.calls.filter(c => c.pick).slice(0, 4).map(c => {
+          const ev = c.evidence, a = ev.answered, b = ev.unanswered;
+          const evText = Math.min(a.games, b.games) >= 8 ? `In your matches, teams facing heavy ${c.threat.label} won ${pct(a.wins / a.games)} with ${c.threat.answer} vs ${pct(b.wins / b.games)} without (${a.games + b.games} games).` : "";
+          const from = c.who.length ? ` — ${c.who.map(heroName).join(" & ")}` : "";
+          return `<div class="build-call"><div><b>Enemy ${esc(c.threat.label)}</b><span class="muted">${esc(from)}</span></div>
+            <div>${esc(label(c.pick.who))} (${esc(heroName(c.pick.hero))}): buy <b>${esc(c.pick.item.label)}</b>${c.pick.alt ? ` <span class="muted">or ${esc(c.pick.alt.label)}</span>` : ""}${c.pick.seen ? ` <span class="muted">· ${c.pick.seen}× by ${esc(heroName(c.pick.hero))} players in your games</span>` : ""}</div>
+            ${evText ? `<div class="muted" style="font-size:12px">${esc(evText)}</div>` : ""}</div>`;
+        }).join("");
+      }
+    }
+    $("#strategy").innerHTML = `${boardCalls ? `<div class="sub-h">Right now · from the scoreboard</div><div class="calls">${boardCalls}</div><div class="sub-h">Game plan · from the lineup</div>` : ""}
+      <div class="calls">${plan.calls.map(c => `<div class="call">${esc(c)}</div>`).join("")}</div>
+      ${builds ? `<div class="sub-h">Build to answer them</div><div class="builds">${builds}</div>` : ""}
       <div class="sub-h">Lanes</div><div class="lanes">${lanes}</div>
       ${order.length ? `<div class="sub-h">Your squad</div>` : ""}${order.map(m => mine[Object.keys(plan.members).indexOf(m)]).join("")}`;
   }
 
-  function render() { renderSetup(); renderLive(); renderStrategy(); }
+  function render() { renderSetup(); renderLive(); renderBoard(); renderStrategy(); }
   window.__matchRender = renderStrategy;
 
   // ---------- toast ----------
@@ -241,7 +316,8 @@
     meSel.onchange = () => { me = meSel.value; store.set("squad-me", me); if (room) room.channel.track({ who: me || "guest", at: Date.now() }); render(); };
     $("#wake").onchange = e => e.target.checked ? wake.enable() : wake.disable();
     $("#scan-file").onchange = e => { const f = e.target.files && e.target.files[0]; if (f) runScan(f); e.target.value = ""; };
-    $("#match-clear").onclick = () => { setPath(["setup"], { ours: {}, theirs: {} }); setPath(["live"], {}); setPath(["clock"], {}); toast("Match cleared"); };
+    $("#board-file").onchange = e => { const f = e.target.files && e.target.files[0]; if (f) runBoardScan(f); e.target.value = ""; };
+    $("#match-clear").onclick = () => { setPath(["setup"], { ours: {}, theirs: {} }); setPath(["live"], {}); setPath(["clock"], {}); setPath(["board"], null); toast("Match cleared"); };
     renderWake(); renderRoom(); render();
     const q = new URLSearchParams(location.search).get("room") || store.get("squad-room", null);
     if (q) joinRoom(q, false);

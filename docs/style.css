@@ -456,3 +456,21 @@ table.fit td { overflow-wrap: anywhere; }
 .ctl button[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
 .status-row .status { margin: 0; }
+.board-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.board { margin-bottom: 10px; }
+.board-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-bottom: 6px; }
+.board-tot { font-size: 13px; width: 100%; }
+.board-t td { font-size: 13px; vertical-align: top; }
+.call.c-bad { border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.call.c-warn { border-color: color-mix(in srgb, var(--warn, #f5a524) 55%, transparent); }
+.call.c-good { border-color: color-mix(in srgb, var(--good) 55%, transparent); }
+.builds { display: grid; gap: 8px; }
+.build-call { padding: 10px 12px; border-radius: var(--r-md); background: var(--glass-soft); border: 1px solid var(--edge); display: grid; gap: 4px; font-size: 14px; }
+.bl { display: grid; gap: 8px; }
+.bl-row { padding: 8px 10px; border-radius: 12px; background: var(--glass-soft); border: 1px solid var(--edge); }
+.bl-head { display: flex; align-items: baseline; gap: 6px; font-size: 14px; }
+.bl-gap { margin-left: auto; font-size: 13px; white-space: nowrap; }
+.bl-vs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-size: 13px; margin-top: 2px; }
+.bl-side { white-space: nowrap; }
+table.cm th.num, table.cm td.num { width: 70px; }
+table.cm th:last-child { width: 30%; }

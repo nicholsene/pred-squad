@@ -337,8 +337,56 @@
     return { lanes, threats, calls, weakest, strongest, next, timeline: TIMELINE, members, squadHere };
   }
 
+  /* ---------- scoreboard snapshot -> state of the game ----------
+     board = { ours: [{role, hero, lvl, k, d, a, gold}], theirs: [...] }  (rows in lane order)
+     Returns team totals, per-lane gaps, who is snowballing, and plain calls. */
+  function boardState(board, setup, T = {}, nameOf = x => x) {
+    if (!board || !board.ours || !board.theirs) return null;
+    const sum = (rows, k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+    const known = (rows, k) => rows.filter(r => r[k] != null);
+    const avg = (rows, k) => { const x = known(rows, k); return x.length ? sum(x, k) / x.length : null; };
+    const us = { gold: sum(board.ours, "gold"), kills: sum(board.ours, "k"), lvl: avg(board.ours, "lvl") };
+    const them = { gold: sum(board.theirs, "gold"), kills: sum(board.theirs, "k"), lvl: avg(board.theirs, "lvl") };
+    // compare averages x5, so one unread value can't flip the result
+    const goldKnown = known(board.ours, "gold").length >= 3 && known(board.theirs, "gold").length >= 3;
+    const goldDiff = goldKnown ? Math.round(5 * (avg(board.ours, "gold") - avg(board.theirs, "gold"))) : null;
+    const late = (us.lvl != null && us.lvl >= 13) || (board.clock != null && board.clock >= 1200);
+    const lvlDiff = us.lvl != null && them.lvl != null ? us.lvl - them.lvl : null;
+    const lanes = ROLES.map((role, i) => {
+      const o = board.ours[i] || {}, e = board.theirs[i] || {};
+      const who = ((setup && setup.ours && setup.ours[role]) || {}).who || null;
+      return { role, who, hero: o.hero, opp: e.hero, lvlDiff: o.lvl != null && e.lvl != null ? o.lvl - e.lvl : null,
+        goldDiff: o.gold != null && e.gold != null ? o.gold - e.gold : null, o, e };
+    });
+    // an enemy is "ahead" when clearly richer than their team or with a big positive score
+    const theirAvgGold = avg(board.theirs, "gold");
+    const fed = board.theirs.map((e, i) => ({ role: ROLES[i], hero: e.hero, e,
+      ahead: (e.gold != null && theirAvgGold && e.gold >= 1.15 * theirAvgGold) || (e.k != null && e.d != null && e.k >= 5 && e.k >= e.d + 4) }))
+      .filter(x => x.ahead);
+    const calls = [];
+    const k = x => `${(Math.abs(x) / 1000).toFixed(1)}k`;
+    if (goldDiff != null) {
+      if (goldDiff <= -2500) calls.push({ level: "bad", text: `Behind ${k(goldDiff)} gold${lvlDiff != null && lvlDiff <= -0.5 ? ` and ${Math.abs(lvlDiff).toFixed(1)} levels` : ""}. Don't take even fights: group, ward around your jungle, farm side lanes and only fight on objectives they have to come to.` });
+      else if (goldDiff >= 2500) calls.push({ level: "good", text: `Ahead ${k(goldDiff)} gold. Press it: group, take Fangtooth/Orb and push the next tower instead of chasing kills.` });
+      else calls.push({ level: "info", text: `Gold is close (${goldDiff >= 0 ? "+" : "−"}${k(goldDiff)}). The next objective fight decides it — be there with vision first.` });
+    }
+    for (const f of fed) calls.push({ level: "warn", text: `${f.hero ? nameOf(f.hero) : ROLE_LABEL[f.role]} (${ROLE_LABEL[f.role]}) is snowballing (${f.e.k}/${f.e.d}/${f.e.a}${f.e.gold ? `, ${k(f.e.gold)} gold` : ""}). Don't fight them alone — focus them first in team fights.` });
+    for (const l of lanes) {
+      const who = `${ROLE_LABEL[l.role]}${l.who ? ` (${l.who})` : ""}`;
+      if (l.lvlDiff != null && l.lvlDiff <= -2) calls.push({ level: "warn", text: late
+        ? `${who} is ${-l.lvlDiff} levels behind ${l.opp ? nameOf(l.opp) : "their laner"} — stay with the team and soak side waves; don't duel.`
+        : `${who} is ${-l.lvlDiff} levels behind their laner — soak waves safely and avoid trades until the level gap closes.` });
+      else if (l.goldDiff != null && l.goldDiff <= -2500) calls.push({ level: "warn", text: late
+        ? `${who} is ${k(l.goldDiff)} gold behind ${l.opp ? nameOf(l.opp) : "their laner"} — don't get caught alone; fight next to your team.`
+        : `${who} is ${k(l.goldDiff)} gold behind their laner — needs jungle help or a lane swap.` });
+      if (l.lvlDiff != null && l.lvlDiff >= 2) calls.push({ level: "good", text: `${who} is ${l.lvlDiff} levels up — ${l.role === "JUNGLE" ? "invade their camps and gank the lane that's even" : "use the window: dive with the jungler or take their tower"}.` });
+    }
+    const goldEstimated = goldKnown && (known(board.ours, "gold").length < 5 || known(board.theirs, "gold").length < 5);
+    return { us, them, goldDiff, goldEstimated, lvlDiff, lanes, fed, calls, late };
+  }
+
   const api = {
-    ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE,
+    ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE, boardState,
     shrink, squadRows, togetherMatches, summarize, comboReport, record,
     memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor, matchPlan,
     context(matches, heroes, meta) { return { matches, heroes, meta, rows: squadRows(matches) }; },
