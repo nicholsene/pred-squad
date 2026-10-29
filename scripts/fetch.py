@@ -63,7 +63,7 @@ query($slug: String!, $f: HeroGeneralStatisticFilterInput, $mf: HeroMatchupStati
       results { matchupHero { slug } matchesPlayed winrate }
     }
     coreBuild(filter: $bf, limit: 3) {
-      results { core1Item { name } core2Item { name } core3Item { name }
+      results { core1Item { name data { displayName } } core2Item { name data { displayName } } core3Item { name data { displayName } }
                 matchesPlayedBuildOrder matchesWonBuildOrder }
     }
   }
@@ -106,6 +106,8 @@ def fetch_heroes(api: PredGG) -> list[dict]:
     heroes = []
     for h in data["heroes"]:
         d = h.get("data") or {}
+        if not h.get("slug"):
+            continue
         heroes.append({
             "id": h["id"],
             "slug": h["slug"],
@@ -119,13 +121,14 @@ def fetch_heroes(api: PredGG) -> list[dict]:
                 for a in (d.get("abilities") or [])
             ],
         })
-    heroes.sort(key=lambda h: h["name"])
+    heroes.sort(key=lambda h: h["name"] or "")
     return heroes
 
 
 def current_patch(api: PredGG) -> tuple[str, list[str]]:
     """Latest version name and the ids of every version in the same major.minor line."""
     vs = api.query(VERSIONS_Q)["versions"]
+    vs = [v for v in vs if v.get("releaseDate")]
     vs.sort(key=lambda v: v["releaseDate"])
     latest = vs[-1]["name"]
     line = ".".join(latest.split(".")[:2])
@@ -215,7 +218,8 @@ def fetch_meta(api: PredGG, heroes: list[dict], patch: str, version_ids: list[st
             ]
             builds = []
             for b in ((d.get("coreBuild") or {}).get("results") or []):
-                items = [(b.get(k) or {}).get("name") for k in ("core1Item", "core2Item", "core3Item")]
+                items = [((b.get(k) or {}).get("data") or {}).get("displayName") or (b.get(k) or {}).get("name")
+                         for k in ("core1Item", "core2Item", "core3Item")]
                 n, w = b.get("matchesPlayedBuildOrder") or 0, b.get("matchesWonBuildOrder") or 0
                 builds.append({"items": [i for i in items if i], "games": n,
                                "wr": round(100 * w / n, 2) if n else None})
