@@ -21,6 +21,7 @@ jobs:
       - run: python tests/test_patch_review.py
       - run: python tests/test_predgg.py
       - run: python tests/test_fetch.py
+      - run: python tests/test_refresh.py
       - run: node tests/test_engine.js
       - run: node tests/test_session.js
       - run: node tests/test_counterbuild.js
