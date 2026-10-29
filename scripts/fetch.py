@@ -40,7 +40,7 @@ RATINGS_Q = "{ ratings { name group startTime endTime ranks { name ratingMin rat
 # Item catalogue: price, stats and type for every item (public data).
 ITEMS_Q = """
 { items { data { name displayName totalPrice price slotType rarity aggressionType class isHidden
-    stats { stat value } } } }
+    stats { stat value } icon smallIcon buildsFrom { name } blocks { name } blockedBy { name } } } }
 """
 
 MP_FIELDS = """
@@ -151,6 +151,10 @@ def fetch_items(api: PredGG) -> list[dict]:
                     "cost": d.get("totalPrice") or d.get("price") or 0, "slot": d.get("slotType"),
                     "rarity": d.get("rarity"), "type": d.get("aggressionType"), "class": d.get("class"),
                     "hidden": bool(d.get("isHidden")),
+                    "icon": d.get("icon"), "smallIcon": d.get("smallIcon"),
+                    "buildsFrom": [x["name"] for x in d.get("buildsFrom", []) if x.get("name")],
+                    "blocks": [x["name"] for x in d.get("blocks", []) if x.get("name")],
+                    "blockedBy": [x["name"] for x in d.get("blockedBy", []) if x.get("name")],
                     "stats": {s["stat"]: s["value"] for s in (d.get("stats") or []) if s.get("stat")}})
     return sorted(out, key=lambda x: x["label"])
 
@@ -319,6 +323,7 @@ def main() -> int:
     args = ap.parse_args()
 
     api = PredGG()
+    succeeded = set()
     previous = load("status.json", {})
     status = {"updatedAt": now_iso(), "authenticated": api.has_credentials, "errors": [],
               "datasets": previous.get("datasets", {})}
@@ -337,6 +342,7 @@ def main() -> int:
             if changed:
                 record["lastChanged"] = now_iso()
             record.pop("error", None)
+            succeeded.add(name)
             return obj
         except (PredGGError, ValueError, KeyError, TypeError) as e:
             record["error"] = str(e)
@@ -349,7 +355,21 @@ def main() -> int:
     refresh("squad.json", lambda: {"players": [{"key": p["key"], "label": p["label"]} for p in CONFIG["players"]], "targets": CONFIG["targets"]})
     hero_file = refresh("heroes.json", lambda: {"updatedAt": now_iso(), "patch": current_patch(api)[0], "heroes": fetch_heroes(api)})
     refresh("ranks.json", lambda: {"updatedAt": now_iso(), **fetch_ranks(api)})
-    refresh("items.json", lambda: {"updatedAt": now_iso(), "patch": current_patch(api)[0], "items": fetch_items(api)})
+    item_file = refresh("items.json", lambda: {"updatedAt": now_iso(), "patch": current_patch(api)[0], "items": fetch_items(api)})
+    from build_item_templates import build as build_templates
+    from patch_review import build_review
+    import hashlib
+    refresh("item-templates.json", lambda: build_templates(item_file, load("item-templates.json", None)))
+    policy_path = ROOT / "config" / "patch-policy.json"
+    baseline_path = ROOT / "config" / "patch-baseline.json"
+    policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+    baseline = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
+    logic = hashlib.sha256((ROOT / "docs/counterbuild.js").read_bytes()).hexdigest()
+    save("patch-review.json", build_review(baseline, hero_file, item_file, {**policy,
+         "sourceComplete": {"heroes.json", "items.json"}.issubset(succeeded),
+         "sourceErrors": [s for s in status["errors"] if s.startswith(("heroes.json:", "items.json:"))],
+         "expectedPatch": hero_file.get("patch") if "heroes.json" in succeeded else None,
+         "counterLogicFingerprint": logic}))
     if not api.has_credentials:
         status["errors"].append("No pred.gg credentials; retaining match history and meta.")
     else:

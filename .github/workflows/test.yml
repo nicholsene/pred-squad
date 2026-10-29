@@ -18,10 +18,13 @@ jobs:
         with:
           node-version: '22'
       - run: pip install -r requirements.txt
+      - run: python tests/test_patch_review.py
       - run: python tests/test_predgg.py
       - run: python tests/test_fetch.py
       - run: node tests/test_engine.js
       - run: node tests/test_session.js
+      - run: node tests/test_counterbuild.js
+      - run: node tests/test_itemvision.js
       - run: |
           for file in docs/*.js; do node --check "$file"; done
       - run: npm install --no-save --package-lock=false playwright@1.62.1

@@ -26,7 +26,7 @@
      if(!frame||!video.videoWidth)return;
      const raw=document.createElement("canvas");raw.width=video.videoWidth;raw.height=video.videoHeight;raw.getContext("2d").drawImage(video,0,0);
      const cropped=document.createElement("canvas");cropped.width=Math.round(frame.w);cropped.height=Math.round(frame.h);cropped.getContext("2d").drawImage(raw,frame.x,frame.y,frame.w,frame.h,0,0,cropped.width,cropped.height);
-     const kind=mode.value;cropped._screenAligned=kind!=="minimap";cropped._originalSource=raw;
+     const kind=mode.value;cropped._capturedAt=Date.now();cropped._screenAligned=kind!=="minimap";cropped._originalSource=raw;
      close();onCapture(kind,cropped);
    };
    try{

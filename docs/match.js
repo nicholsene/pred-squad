@@ -11,6 +11,7 @@
   const $ = s => document.querySelector(s);
   const esc = A.esc, pct = A.pct, wl = A.wl, heroName = A.heroName, label = A.label, roleName = r => E.ROLE_LABEL[r] || r;
   const ROLES = E.ROLES;
+  const num=(x,d=0)=>Number(x).toLocaleString(undefined,{maximumFractionDigits:d});
 
   // ---------- state ----------
   const M = window.SquadSession;
@@ -215,16 +216,18 @@
     const s = document.createElement("script"); s.src = "scoreboard.js"; s.onload = res; s.onerror = () => rej(new Error("Couldn't load the scoreboard reader")); document.head.appendChild(s);
   }));
   async function runBoardScan(file) {
+    const scanStartedAt=Date.now(), scanClock=clockSec(), sessionId=S.id;
     const box = $("#board-progress"); box.hidden = false;
     const bar = box.querySelector("i"), txt = box.querySelector("span");
     try {
       await loadScoreboard();
-      const known = { L: ROLES.map(r => (S.setup.ours[r] || {}).hero || null), R: ROLES.map(r => (S.setup.theirs[r] || {}).hero || null) };
-      const res = await window.ScoreboardScan.scan(file, { heroes: A.heroes, known, onProgress: (m, f) => { txt.textContent = m; bar.style.width = Math.round(f * 100) + "%"; } });
+      const known = {}; // Read heroes again; previous setup may be wrong or from another match.
+      const res = await window.ScoreboardScan.scan(file, { heroes: A.heroes, known, itemTemplates:A.itemTemplates, items:A.items, patch:A.itemPatch, onProgress: (m, f) => { txt.textContent = m; bar.style.width = Math.round(f * 100) + "%"; } });
       if (!res.ours.length) { txt.textContent = res.issues.join(" "); return; }
-      const board = { at: Date.now(), clock: clockSec(), ours: res.ours, theirs: res.theirs };
+      if(S.id!==sessionId)return toast("Match changed while scanning. Scan again for the current match.");
+      const board = { at: file._capturedAt || scanStartedAt, capturedAt:file._capturedAt || null, clock:scanClock, sessionId, ours:res.ours, theirs:res.theirs };
       reviewBoard(board, res.issues);
-      txt.textContent = res.issues.length ? res.issues.join(" ") : "Scoreboard read — the plan below is updated for everyone.";
+      txt.textContent = res.issues.length ? res.issues.join(" ") : "Scoreboard read — review heroes, levels and items before updating the plan.";
       bar.style.width = "100%";
     } catch (e) { txt.textContent = "Scan failed: " + (e.message || e); }
   }
@@ -326,6 +329,7 @@
   }
 
   function renderStrategy() {
+    renderCounterBuild();
     const plan = E.matchPlan(A.ctx, S.setup, S.live, clockSec(), A.T);
     const anyHero = plan.lanes.some(l => l.hero || l.opp);
     if (!anyHero) { $("#strategy").innerHTML = `<p class="muted" style="margin:0">Scan the loading screen or pick heroes above to get the plan.</p>`; return; }
@@ -353,27 +357,8 @@
     // scoreboard calls come first: they are the freshest information
     const st = S.board && Date.now()-S.board.at < 180000 ? E.boardState(S.board, S.setup, A.T, heroName) : null;
     const boardCalls = st ? st.calls.map(c => `<div class="call c-${c.level}">${esc(c.text)}</div>`).join("") : "";
-    // build answers to what the enemy is building / likely to build
-    let builds = "";
-    const L = A.lab && A.lab();
-    if (L) {
-      const enemy = ROLES.map((r, i) => ({ hero: (S.setup.theirs[r] || {}).hero, ahead: !!(S.setup.theirs[r] || {}).fed }));
-      const ours = ROLES.map(r => S.setup.ours[r] || {}).filter(o => o.who && o.hero).map(o => ({ who: o.who, hero: o.hero, deaths: (S.live[o.who] || {}).deaths || 0 }));
-      if (ours.length && enemy.some(e => e.hero)) {
-        const res = window.ItemLab.respond(L, enemy, ours);
-        builds = res.calls.filter(c => c.pick).slice(0, 4).map(c => {
-          const ev = c.evidence, a = ev.answered, b = ev.unanswered;
-          const evText = Math.min(a.games, b.games) >= 8 ? `In your matches, teams facing heavy ${c.threat.label} won ${pct(a.wins / a.games)} with ${c.threat.answer} vs ${pct(b.wins / b.games)} without (${a.games + b.games} games).` : "";
-          const from = c.who.length ? ` — ${c.who.map(heroName).join(" & ")}` : "";
-          return `<div class="build-call"><div><b>Enemy ${esc(c.threat.label)}</b><span class="muted">${esc(from)}</span></div>
-            <div>${esc(label(c.pick.who))} (${esc(heroName(c.pick.hero))}): buy <b>${esc(c.pick.item.label)}</b>${c.pick.alt ? ` <span class="muted">or ${esc(c.pick.alt.label)}</span>` : ""}${c.pick.seen ? ` <span class="muted">· ${c.pick.seen}× by ${esc(heroName(c.pick.hero))} players in your games</span>` : ""}</div>
-            ${evText ? `<div class="muted" style="font-size:12px">${esc(evText)}</div>` : ""}</div>`;
-        }).join("");
-      }
-    }
     $("#strategy").innerHTML = `${boardCalls ? `<div class="sub-h">Right now · from the scoreboard</div><div class="calls">${boardCalls}</div><div class="sub-h">Game plan · from the lineup</div>` : ""}
       <div class="calls">${plan.calls.map(c => `<div class="call">${esc(c)}</div>`).join("")}</div>
-      ${builds ? `<div class="sub-h">Build to answer them</div><div class="builds">${builds}</div>` : ""}
       <div class="sub-h">Lanes</div><div class="lanes">${lanes}</div>
       ${order.length ? `<div class="sub-h">Your squad</div>` : ""}${order.map(m => mine[Object.keys(plan.members).indexOf(m)]).join("")}`;
   }
@@ -500,24 +485,88 @@
     };
   }
   function reviewBoard(board,issues) {
-    const reviewedVersion=room?.version;
+    const reviewedVersion=room?.version, reviewedSession=S.id;
     const el=$("#scan-review");el.hidden=false;
-    el.innerHTML=`<h3>Review scoreboard</h3><p class="note">${esc((issues||[]).join(" "))} Check uncertain numbers; blank means unknown.</p><div class="scroll"><table class="scan-table"><thead><tr><th>Side / lane</th><th>Hero</th>${["lvl","k","d","a","gold"].map(k=>`<th>${k}</th>`).join("")}</tr></thead><tbody>`+["ours","theirs"].flatMap(side=>board[side].map((row,i)=>`<tr><td>${side==="ours"?"Us":"Enemy"} · ${roleName(ROLES[i])}</td><td><select data-side="${side}" data-row="${i}" data-field="hero"><option value="">Unknown</option>${A.heroes.map(h=>`<option value="${esc(h.slug)}" ${row.hero===h.slug?"selected":""}>${esc(h.name)}</option>`).join("")}</select></td>${["lvl","k","d","a","gold"].map(k=>`<td><input class="${row.alternatives?.[k]?"uncertain":""}" title="${row.alternatives?.[k]?esc("Readings disagree: "+row.alternatives[k].join(" or ")):"Verify against photo"}" type="number" min="0" aria-label="${side} ${ROLES[i]} ${k}" data-side="${side}" data-row="${i}" data-field="${k}" value="${row[k]??""}"></td>`).join("")}</tr>`)).join("")+`</tbody></table></div><button class="chip cta" id="scan-apply">Apply scan</button><button class="chip" id="scan-cancel">Cancel</button>`;
+    const itemByInput=value=>(A.items||[]).find(it=>it.name.toLowerCase()===value.trim().toLowerCase()||it.label.toLowerCase()===value.trim().toLowerCase());
+    const catalog=new Map((A.items||[]).map(it=>[it.name,it]));
+    const options=(A.items||[]).filter(it=>it.slot!=="TRINKET"&&it.slot!=="CREST");
+    el.innerHTML=`<h3>Review lobby and builds</h3><p class="note">${esc((issues||[]).join(" "))} Verify heroes, levels and the six equipment slots for both teams (exclude crests and trinkets). Gold on the scoreboard is total earned, not spendable.</p>
+      <label>Game time shown in photo <input id="board-clock" placeholder="m:ss" inputmode="numeric"></label>
+      <label><input type="checkbox" id="board-now" ${board.capturedAt&&Date.now()-board.capturedAt<90000?"checked":""}> This photo was taken just now</label>
+      <p class="note">Enter the screenshot's game time to avoid using an old build as current. If the app clock is not running, explicitly confirm a newly taken photo.</p>
+      <datalist id="inventory-catalog">${options.map(it=>`<option value="${esc(it.label)}">${esc(it.name)}</option>`).join("")}</datalist>
+      <div class="review-players">`+
+      ["ours","theirs"].flatMap(side=>board[side].map((row,i)=>`<article class="review-player"><h4>${side==="ours"?"Your team":"Enemy"} · ${roleName(ROLES[i])}</h4><label>Hero<select data-side="${side}" data-row="${i}" data-field="hero"><option value="">Unknown</option>${A.heroes.map(h=>`<option value="${esc(h.slug)}" ${row.hero===h.slug?"selected":""}>${esc(h.name)}</option>`).join("")}</select></label>${side==="ours"?`<label>Player<select data-player-row="${i}" aria-label="Player in ${roleName(ROLES[i])}"><option value="">Other teammate</option>${A.squad.players.map(p=>`<option value="${esc(p.key)}" ${S.setup.ours[ROLES[i]]?.who===p.key?"selected":""}>${esc(p.label)}</option>`).join("")}</select></label>`:""}<div class="review-stats">${["lvl","k","d","a","gold"].map(k=>`<label>${({lvl:"Level",k:"Kills",d:"Deaths",a:"Assists",gold:"Total gold"})[k]}<input class="${row.alternatives?.[k]?"uncertain":""}" title="${row.alternatives?.[k]?esc("Readings disagree: "+row.alternatives[k].join(" or ")):"Verify against photo"}" type="number" min="0" aria-label="${side} ${ROLES[i]} ${k}" data-side="${side}" data-row="${i}" data-field="${k}" value="${row[k]??""}"></label>`).join("")}</div>
+        <details class="inventory-review" data-inventory="${side}-${i}"><summary>Review equipment · ${(row.items||[]).filter(Boolean).length} suggested reads</summary>
+        <div class="inventory-slots">${Array.from({length:6},(_,j)=>`<label>Slot ${j+1}${row.itemPreviews?.[j]?`<img class="item-crop" alt="Item slot ${j+1} from photo" src="${esc(row.itemPreviews[j])}">`:""}<input list="inventory-catalog" data-item-side="${side}" data-item-row="${i}" data-item-slot="${j}" aria-label="${side} ${ROLES[i]} item ${j+1}" placeholder="Unknown / empty" value="${esc(catalog.get(row.items?.[j])?.label||"")}"></label>`).join("")}</div>
+        <label><input type="checkbox" data-confirm-side="${side}" data-confirm-row="${i}"> I checked these item names</label>
+        <label><input type="checkbox" data-complete-side="${side}" data-complete-row="${i}"> All six slots are visible; blank slots are empty</label>
+        ${side==="ours"?`<label>Current spendable gold (optional, from your HUD)<input type="number" min="0" max="99999" data-current-gold="${i}" placeholder="Unknown"></label>`:""}
+        </details></article>`)).join("")+`</div><button class="chip cta" id="scan-apply">Apply lobby snapshot</button><button class="chip" id="scan-cancel">Cancel</button>`;
     $("#scan-cancel").onclick=()=>el.hidden=true;
     $("#scan-apply").onclick=()=>{
       try {
+        if(S.id!==reviewedSession)throw new Error("Match changed. Scan again for the current match.");
+        const pictureClock=M.parseTime($("#board-clock").value);
+        if(pictureClock!=null&&S.clock.startedAt){
+          if(pictureClock>clockSec()+10)throw new Error("Screenshot time is ahead of your app clock. Adjust the clock first.");
+          board.clock=pictureClock;board.at=S.clock.startedAt+pictureClock*1000;
+        }else if($("#board-now").checked){board.at=board.capturedAt||board.at;board.clock=board.clock??clockSec();}
+        else throw new Error("Enter the screenshot game time or confirm the photo was taken just now.");
         el.querySelectorAll("[data-field]").forEach(x=>board[x.dataset.side][+x.dataset.row][x.dataset.field]=x.dataset.field==="hero"?(x.value||null):(x.value===""?null:Number(x.value)));
-        M.validateBoard(board);
+        for(const side of ["ours","theirs"])for(let i=0;i<5;i++){
+          const row=board[side][i];row.items=[];
+          for(const input of el.querySelectorAll(`[data-item-side="${side}"][data-item-row="${i}"]`)){
+            const it=input.value.trim()?itemByInput(input.value):null;
+            if(it&&["CREST","TRINKET"].includes(it.slot))throw new Error("Use equipment items here; crests and trinkets are separate slots.");
+            if(input.value.trim()&&!it)throw new Error(`Choose a catalog item for ${side} ${roleName(ROLES[i])}, slot ${+input.dataset.itemSlot+1}.`);
+            row.items.push(it?.name||null);
+          }
+          row.inventoryConfirmed=el.querySelector(`[data-confirm-side="${side}"][data-confirm-row="${i}"]`).checked;
+          row.inventoryComplete=row.inventoryConfirmed&&el.querySelector(`[data-complete-side="${side}"][data-complete-row="${i}"]`).checked;
+          row.inventoryAt=board.at;row.role=ROLES[i];
+          if(side==="ours"){const value=el.querySelector(`[data-current-gold="${i}"]`).value;row.currentGold=value===""?null:Number(value);}
+          delete row.itemPreviews;delete row.itemCandidates; // Images and descriptors never enter shared state.
+        }
+        M.validateBoard(board,{items:A.items,heroes:A.heroes,sessionId:S.id});
         const setup=M.clone(S.setup),live=M.clone(S.live),st=E.boardState(board,setup,A.T);
         for(const side of ["ours","theirs"])ROLES.forEach((r,i)=>{if(board[side][i].hero)setup[side][r]={...setup[side][r],hero:board[side][i].hero};});
+        ROLES.forEach((r,i)=>{setup.ours[r]={...setup.ours[r],who:el.querySelector(`[data-player-row="${i}"]`).value};});
         const errors=M.validateSetup(setup);if(errors.length)throw new Error(errors.join(" "));
         ROLES.forEach((r,i)=>{const who=setup.ours[r]?.who;if(who&&board.ours[i].d!=null)live[who]={...live[who],deaths:board.ours[i].d};});
         for(const f of st.fed)setup.theirs[f.role]={...setup.theirs[f.role],fed:true};
         previousScan={before:{setup:M.clone(S.setup),live:M.clone(S.live),board:M.clone(S.board)},after:{setup:M.clone(setup),live:M.clone(live),board:M.clone(board)}};
         commit([{path:["setup"],value:setup},{path:["live"],value:live},{path:["board"],value:board}],reviewedVersion ?? true);el.hidden=true;
-        toast("Confirmed scoreboard applied.");
+        toast("Lobby snapshot applied. Build advice updated for your squad.");
       }catch(e){toast(e.message);}
     };
+  }
+  function renderCounterBuild() {
+    const el=$("#counterbuild");if(!el)return;
+    const board=S.board?.sessionId===S.id?S.board:null;
+    const plan=window.CounterBuild.plan({items:A.items,heroes:A.heroes,matches:A.ctx.matches,setup:S.setup,board,patchReview:A.patchReview});
+    const key=JSON.stringify([board,S.setup,me,A.patchReview,plan.status]);
+    const age=board?Math.max(0,Math.floor((Date.now()-board.at)/1000)):null;
+    const ageText=age==null?"Scan a full scoreboard, then confirm the builds to see responses across all five enemies.":`Snapshot ${Math.floor(age/60)}:${String(age%60).padStart(2,"0")} ago · ${plan.status==="stale"?"Rescan needed":"Reviewed observations"}`;
+    if(el._counterKey===key){const status=el.querySelector("#counter-age");if(status)status.textContent=ageText;return;}
+    el._counterKey=key;
+    const opened=new Set([...el.querySelectorAll("details[open][data-section]")].map(d=>d.dataset.section));
+    const threats=plan.threats.slice(0,5).map(t=>`<li><b>${esc(heroName(t.hero))}</b> · ${esc(roleName(t.role))}<br>${(t.reasons||[]).map(esc).join(" · ")}<br><span class="note">${t.items?.length?t.items.map(n=>esc((A.items.find(i=>i.name===n)||{}).label||n)).join(", "):"Build not confirmed"}</span></li>`).join("");
+    const players=plan.players.slice().sort((a,b)=>(b.who===me)-(a.who===me)).map(p=>`${p.who===me?"":`<details data-section="player-${esc(p.who)}"><summary>${esc(label(p.who))} · squad build response</summary>`}<article class="counter-player ${p.who===me?"mine":""}"><h3>${esc(label(p.who))} · ${esc(heroName(p.hero))}</h3>
+      <ol class="counter-purchases">${(p.recommendations||[]).map(rec=>`<li><strong>${esc(rec.item.label)}</strong> · ${num(rec.fullCost,0)}g full cost<br><b>${rec.action==="consider-swap"?"Optional later swap — review before selling":rec.action==="verify-inventory"?"Check remaining inventory before buying":rec.affordable===true?"Affordable with confirmed current gold":rec.action==="save"?(rec.affordable===false?"Save toward this response":"Plan this response — check shop cost and budget"):"Next purchase to consider"}</b>
+      <p>${esc(rec.reasons?.[0]||"")}</p>${rec.reasons?.length>1?`<details data-section="reason-${esc(p.who)}-${esc(rec.item.name)}"><summary>How this helps · evidence and cost</summary><p>${rec.reasons.slice(1).map(esc).join(" ")}</p></details>`:""}<p class="note">Answers ${rec.targets.map(heroName).map(esc).join(", ")} · ${rec.confidence==="observed"?"Confirmed item evidence":"Limited evidence"}</p></li>`).join("")}</ol>
+      ${(p.levelDisadvantages||[]).length?`<p class="warn">${p.levelDisadvantages.map(g=>`${esc(heroName(g.hero))} (${esc(roleName(g.role))}) is ${Math.abs(g.gap)} levels ahead`).join(" · ")}</p>`:""}
+      ${(p.guidance||[]).map(g=>`<p>${esc(g)}</p>`).join("")}
+      ${p.ownedAnswers?.length?`<p class="note">Already covered: ${p.ownedAnswers.map(esc).join(", ")}</p>`:""}</article>${p.who===me?"":"</details>"}`).join("");
+    const pr=A.patchReview,changedItems=pr?.changes?.items||[],changedHeroes=pr?.changes?.heroes||[];
+    const patchInfo=pr?`<details class="patch-review" data-section="patch"><summary>Patch data: ${esc(({reviewed:"Reviewed","initial-baseline":"Initial baseline — review pending","review-required":"Review needed","source-incomplete":"Refresh incomplete"})[pr.status]||pr.status)}</summary><p>${changedItems.length} changed items · ${changedHeroes.length} changed heroes / skill orders</p>${(pr.sourceProblems||[]).map(x=>`<p class="warn">${esc(x)}</p>`).join("")}<ul>${[...changedItems.slice(0,8),...changedHeroes.slice(0,8)].map(x=>`<li>${esc(x.id)}: ${x.fields.map(esc).join(", ")}</li>`).join("")}</ul>${/^https:\/\/(www\.)?predecessorgame\.com\//.test(pr.officialNotesUrl||"")?`<a href="${esc(pr.officialNotesUrl)}" target="_blank" rel="noopener">Official patch notes for review</a>`:""}<p class="note">Patch notes require a rule review; the app does not automatically interpret new mechanics.</p></details>`:"";
+    el.innerHTML=`<h3>Adapt your build · whole lobby</h3><p id="counter-age" class="note" role="status">${esc(ageText)}</p>
+      <button class="chip cta" id="counterbuild-scan">Scan scoreboard / builds</button>
+      <div class="counter-player-grid">${players}</div>
+      ${threats?`<details data-section="threats"><summary>Why these responses · lobby threats</summary><ol class="lobby-threats">${threats}</ol></details>`:""}
+      ${patchInfo}${plan.warnings.length?`<details data-section="coverage" ${plan.status==="patch-review-required"||plan.status==="stale"?"open":""}><summary>Advice coverage · ${plan.status==="patch-review-required"?"patch review needed":plan.status==="stale"?"rescan needed":"check evidence"}</summary>${plan.warnings.map(w=>`<p class="note">${esc(w)}</p>`).join("")}</details>`:""}`;
+    el.querySelectorAll("details[data-section]").forEach(d=>{if(opened.has(d.dataset.section))d.open=true;});
+    $("#counterbuild-scan").onclick=()=>$("#board-file").click();
   }
   async function openMap(file) {
     if(clockSec()==null)return toast("Start the match clock before scanning a countdown.");
@@ -573,6 +622,7 @@
     if(wake.on)wake.enable();
     clearInterval(tick); tick = setInterval(() => {
       if(document.visibilityState !== "visible") return;
+      if(S.board && Math.floor(Date.now()/1000)%15===0)renderCounterBuild();
       if(S.clock?.startedAt) { renderLive(); renderObjectives(); if(Math.floor(clockSec())%15===0){renderStrategy();renderBoard();} }
     },1000);
     document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") { render(); refreshRoom().then(flush); } });
