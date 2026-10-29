@@ -226,6 +226,7 @@
   }
 
   function render() { renderSetup(); renderLive(); renderStrategy(); }
+  window.__matchRender = renderStrategy;
 
   // ---------- toast ----------
   let toastT; function toast(msg) {

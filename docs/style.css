@@ -447,3 +447,7 @@ details[open] summary::before { transform: rotate(90deg); }
 table.fit { table-layout: fixed; width: 100%; min-width: 0; }
 table.fit th.num, table.fit td.num { width: 64px; white-space: nowrap; }
 table.fit td { overflow-wrap: anywhere; }
+.sub-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ctl { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--glass-soft); border: 1px solid var(--edge); text-transform: none; letter-spacing: 0; }
+.ctl button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650; padding: 5px 12px; border-radius: 999px; cursor: pointer; min-height: 28px; }
+.ctl button[aria-pressed="true"] { background: var(--accent); color: #fff; }

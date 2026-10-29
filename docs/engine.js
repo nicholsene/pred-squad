@@ -103,10 +103,10 @@
   }
 
   // ---------------- combo record ----------------
-  function comboReport(matches, selected) {
+  function comboReport(matches, selected, exact = true) {
     const sel = keyOf(selected);
-    const games = togetherMatches(matches, sel, true);
-    const rows = squadRows(games.map(g => g.match)).filter(r => sel.includes(r.member) && sameSet(r.together, sel));
+    const games = togetherMatches(matches, sel, exact);
+    const rows = squadRows(games.map(g => g.match)).filter(r => sel.includes(r.member) && (exact ? sameSet(r.together, sel) : sel.every(m => r.together.includes(m))));
     const perMatch = groupBy(rows, r => r.matchId);
     const lineups = new Map();
     for (const [, rs] of perMatch) {

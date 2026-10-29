@@ -46,7 +46,8 @@
   const saved = (() => { try { return JSON.parse(localStorage.getItem("squad-sel") || "null"); } catch { return null; } })();
   const state = {
     selected: new Set(saved && saved.length ? saved.filter(k => squad.players.some(p => p.key === k)) : squad.players.map(p => p.key)),
-    exact: true, scope: "group",
+    scope: "group",
+    controls: (() => { try { return localStorage.getItem("squad-controls") === "pc" ? "pc" : "ps5"; } catch { return "ps5"; } })(),
   };
   if (!state.selected.size) squad.players.forEach(p => state.selected.add(p.key));
   const persist = () => { try { localStorage.setItem("squad-sel", JSON.stringify([...state.selected])); } catch {} };
@@ -66,7 +67,16 @@
     };
     picker.appendChild(b);
   }
-  $("#exact").onchange = e => { state.exact = e.target.checked; render(); };
+  // PS5 / PC button labels for level-up orders (per device)
+  const PC_KEYS = { BASIC: "LMB", PRIMARY: "Q", SECONDARY: "E", ALTERNATE: "RMB", ULTIMATE: "R", PASSIVE: "—" };
+  const keyLabel = k => (state.controls === "pc" ? PC_KEYS : E.PS5)[k] || k;
+  const ctlSwitch = () => `<span class="ctl" role="group" aria-label="Controls">${["ps5", "pc"].map(c =>
+    `<button type="button" data-ctl="${c}" aria-pressed="${state.controls === c}">${c === "pc" ? "PC" : "PS5"}</button>`).join("")}</span>`;
+  document.addEventListener("click", ev => {
+    const b = ev.target.closest("[data-ctl]"); if (!b || b.dataset.ctl === state.controls) return;
+    state.controls = b.dataset.ctl; try { localStorage.setItem("squad-controls", state.controls); } catch {}
+    const y = scrollY; render(); if (window.__matchRender) window.__matchRender(); scrollTo(0, y);
+  });
   const seg = document.querySelector(".seg");
   seg.querySelectorAll("button").forEach((b, i) => b.onclick = () => {
     seg.querySelectorAll("button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", x === b); });
@@ -76,7 +86,6 @@
   // ---------- 1: record ----------
   function groupRows() {
     const s = sel();
-    if (state.exact) return E.comboReport(matches, s).rows;
     const tm = E.togetherMatches(matches, s, false).map(x => x.match);
     return E.squadRows(tm).filter(r => s.includes(r.member) && s.every(m => r.together.includes(m)));
   }
@@ -86,7 +95,6 @@
     const rows = ctx.rows.filter(r => r.member === m).sort((a, b) => String(b.start).localeCompare(String(a.start)));
     const all = E.record(rows);
     $("#rec-h").innerHTML = `<span class="step">1</span>${esc(label(m))}'s record`;
-    $("#exact").closest(".toggle").hidden = true;
     if (!all.games) { $("#record").innerHTML = `<p class="muted">No games for ${esc(label(m))} yet.</p>`; return; }
     const others = squad.players.map(p => p.key).filter(k => k !== m);
     const groups = [["Solo (no squad)", r => r.together.length === 1]]
@@ -118,14 +126,13 @@
     const s = sel();
     if (s.length === 1) return renderSolo(s[0]);
     $("#rec-h").innerHTML = `<span class="step">1</span>Record together`;
-    $("#exact").closest(".toggle").hidden = false;
-    const c = E.comboReport(matches, s);
+    const c = E.comboReport(matches, s, false);
     const rows = groupRows();
     const perMatch = new Map(); rows.forEach(r => perMatch.set(r.matchId, r));
     const rec = E.record([...perMatch.values()]);
     const who = s.map(label).join(" + ");
     let html = `<div class="tile hero-stat">
-      <div><div class="who">${esc(who)}${state.exact ? "" : " · plus anyone"}</div>
+      <div><div class="who">${esc(who)} · with or without others</div>
         <div class="big">${rec.games ? wl(rec) : "0–0"}<small>${rec.games ? pct(rec.wr) + " win rate" : "no games together yet"}</small></div></div>
       <div style="min-width:160px;flex:1;max-width:320px"><div class="bar-meter"><i style="width:${rec.games ? Math.round(rec.wr * 100) : 0}%"></i></div>
         <div class="muted" style="font-size:12px;margin-top:6px">${rec.games} game${rec.games === 1 ? "" : "s"}${c.lineups.length ? ` · ${c.lineups.length} lineup${c.lineups.length === 1 ? "" : "s"}` : ""}</div></div>
@@ -234,16 +241,16 @@
       else lines.push(`<span class="muted">No squad games in ${esc(roleName(p.role))} against ${esc(heroName(p.opp))} yet.</span>`);
       if (b.swap) lines.push(`<span class="warn">Consider <b>${esc(heroName(b.swap.hero))}</b> instead (${pct(b.swap.score)}).</span>`);
     }
-    const legend = [...new Map(b.skillOrder.map(s => [s.key, s]))].map(([, s]) => `<span><b>${esc(s.button)}</b> ${esc(s.name)}</span>`).join("");
-    const skills = b.skillOrder.length ? `<div class="sub-h">Level-up order</div><div class="skills">${b.skillOrder.map(s =>
-      `<div class="skill k-${s.key} ${s.key === "ULTIMATE" ? "ult" : ""}"><b>${s.level}</b>${esc(s.button)}</div>`).join("")}</div>
+    const legend = [...new Map(b.skillOrder.map(s => [s.key, s]))].map(([, s]) => `<span><b>${esc(keyLabel(s.key))}</b> ${esc(s.name)}</span>`).join("");
+    const skills = b.skillOrder.length ? `<div class="sub-h sub-row">Level-up order ${ctlSwitch()}</div><div class="skills">${b.skillOrder.map(s =>
+      `<div class="skill k-${s.key} ${s.key === "ULTIMATE" ? "ult" : ""}"><b>${s.level}</b>${esc(keyLabel(s.key))}</div>`).join("")}</div>
       <div class="legend">${legend}</div>` : "";
     const builds = b.meta && b.meta.builds && b.meta.builds.length ? `<div class="sub-h">Core builds this patch</div><table><tbody>${b.meta.builds.map(x =>
       `<tr><td>${x.items.map(esc).join(" → ")}</td><td class="num">${x.wr != null ? x.wr.toFixed(1) + "%" : "—"}</td><td class="num muted">${num(x.games, 0)}</td></tr>`).join("")}</tbody></table>` : "";
     const mus = (b.best.length || b.worst.length) ? `<div class="grid" style="margin-top:6px">
       <div><div class="sub-h">Best lane matchups</div>${b.best.map(x => `<span class="pill good">${esc(heroName(x.hero))} ${x.wr.toFixed(0)}%</span>`).join("")}</div>
       <div><div class="sub-h">Worst lane matchups</div>${b.worst.map(x => `<span class="pill bad">${esc(heroName(x.hero))} ${x.wr.toFixed(0)}%</span>`).join("")}</div></div>` : "";
-    const abil = (b.abilities || []).filter(a => a.key !== "BASIC").map(a => `<tr><td><b>${esc(E.PS5[a.key])}</b></td><td><b>${esc(a.name)}</b><br><span class="muted">${esc(a.desc)}</span></td></tr>`).join("");
+    const abil = (b.abilities || []).filter(a => a.key !== "BASIC").map(a => `<tr><td><b>${esc(keyLabel(a.key))}</b></td><td><b>${esc(a.name)}</b><br><span class="muted">${esc(a.desc)}</span></td></tr>`).join("");
     return `<div class="verdict">${lines.join("<br>")}</div>${skills}${builds}${mus}
       ${abil ? `<details><summary>Abilities</summary><table><tbody>${abil}</tbody></table></details>` : ""}`;
   }
