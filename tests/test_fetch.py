@@ -4,6 +4,7 @@ import json
 import random
 import sys
 import tempfile
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -93,7 +94,25 @@ def main():
         fetch.save("matches.json", out2)
         json.loads((Path(d) / "matches.json").read_text())
         (ROOT / "tests" / "fixture_matches.json").write_text(json.dumps(out2))
-    print(f"ok: {n_first} matches, incremental run made {len(IDS)} calls")
+    with tempfile.TemporaryDirectory() as d:
+        fetch.DATA = Path(d)
+        prior = {"updatedAt": "old", "heroes": {"old": {"MIDLANE": {"games": 1}}}}
+        fetch.save("meta.json", prior)
+        class Credentials:
+            has_credentials = True
+        def denied(*args):
+            raise fetch.PredGGError("simulated meta outage")
+        with patch.object(fetch, "PredGG", return_value=Credentials()), patch.object(fetch, "current_patch", return_value=("1.17.2", ["v"])), patch.object(fetch, "fetch_heroes", return_value=[{"slug": "h"}]), patch.object(fetch, "fetch_ranks", return_value={"ranks": [{"name": "Bronze"}]}), patch.object(fetch, "fetch_items", return_value=[{"name": "Sword"}]), patch.object(fetch, "fetch_matches", return_value={"matches": []}), patch.object(fetch, "fetch_meta", side_effect=denied), patch.object(sys, "argv", ["fetch.py"]):
+            assert fetch.main() == 1
+        assert fetch.load("meta.json", {}) == prior
+        assert fetch.load("heroes.json", {})["heroes"] == [{"slug": "h"}]
+        status = fetch.load("status.json", {})
+        assert status["datasets"]["heroes.json"]["lastSuccess"]
+        assert "simulated meta outage" in status["datasets"]["meta.json"]["error"]
+        fetch.save("status.json", {"updatedAt": "one"})
+        fetch.save("status.json", {"updatedAt": "two"})
+        assert fetch.load("status.json", {})["updatedAt"] == "two"
+    print(f"ok: {n_first} matches, incremental merge, partial refresh retention and heartbeat")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@
   function getWorker() {
     return workerP ||= loadLib().then(T => T.createWorker("eng", 1, {
       workerPath: CFG.workerPath, corePath: CFG.corePath, langPath: CFG.langPath, gzip: true,
-    }));
+    })).catch(e => { workerP = null; throw e; });
   }
 
   // ---------- image helpers ----------
@@ -46,6 +46,7 @@
       for (let i = 0; i < p.length; i += 4) for (let j = 0; j < 3; j++) p[i + j] = Math.max(0, Math.min(255, (p[i + j] - lo) * k));
       g.putImageData(d, 0, 0);
     }
+    img.close();
     return c;
   }
   /** crop+scale, then binarise: dark text on white. mode: lum | max | min */
@@ -56,9 +57,9 @@
     const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
     for (let i = 0; i < p.length; i += 4) {
       const r = p[i], gg = p[i + 1], b = p[i + 2];
-      let v = mode === "max" ? Math.max(r, gg, b) : mode === "min" ? Math.min(r, gg, b) : 0.299 * r + 0.587 * gg + 0.114 * b;
-      if (mode !== "min") v = Math.min(255, Math.max(0, (v - 128) * 1.7 + 128)); // contrast boost
-      const o = v > thr ? 0 : 255; p[i] = p[i + 1] = p[i + 2] = o; p[i + 3] = 255;
+      let v = mode === "max" ? Math.max(r, gg, b) : mode === "min" ? Math.min(r, gg, b) : mode === "green" ? gg : 0.299 * r + 0.587 * gg + 0.114 * b;
+      if (mode !== "min" && mode !== "gray") v = Math.min(255, Math.max(0, (v - 128) * 1.7 + 128)); // contrast boost
+      const o = mode === "gray" ? 255 - v : v > thr ? 0 : 255; p[i] = p[i + 1] = p[i + 2] = o; p[i + 3] = 255;
     }
     g.putImageData(d, 0, 0); return c;
   }
@@ -126,9 +127,40 @@
     return hits;
   }
 
+  // Once the player has marked the display corners, read each card's text band.
+  // This avoids skin names, surrounding room lighting and unrelated UI text.
+  async function alignedLoading(src,heroes,squad,onProgress) {
+    const W=src.width,H=src.height,dict=heroes.map(h=>({slug:h.slug,key:letters(h.name)})),tags=squad.map(p=>({slug:p.key,key:letters(p.label)}));
+    const teams={top:{},bottom:{}},votes={top:0,bottom:0};let found=0;
+    for(const [row,y] of [["top",.275],["bottom",.775]])for(let i=0;i<5;i++){
+      onProgress("Reading individual hero cards…",.1+.8*found/10);
+      const crop={x:W*(.315+.135*i),y:H*y,w:W*.13,h:H*.065,scale:4};
+      let best=null;
+      for(const mode of ["gray","green","max"]){
+        const ls=await words(prep(src,{...crop,mode,thr:140}),{tessedit_pageseg_mode:"6"});
+        const hits=findHeroes(ls,dict,4).sort((a,b)=>b.s-a.s||b.y-a.y);
+        if(hits.length&&(!best||hits[0].s>best.s))best=hits[0];
+        if(best?.s===1)break;
+      }
+      const slot={};if(best&&best.s>=.8){slot.hero=best.slug;found++;}
+      teams[row][ROLES[i]]=slot;
+      const tagLines=await words(prep(src,{x:crop.x,y:H*(row==="top"?.34:.845),w:crop.w,h:H*.045,scale:4,mode:"gray"}),{tessedit_pageseg_mode:"6"});
+      const tagHits=findTokens(tagLines,tags,4);
+      if(tagHits.length){slot.who=tagHits[0].slug;votes[row]++;}
+    }
+    const oursRow=votes.top>votes.bottom?"top":"bottom",ours=teams[oursRow],theirs=teams[oursRow==="top"?"bottom":"top"],issues=[];
+    for(const team of [ours,theirs]){
+      const seen=new Set();for(const role of ROLES){const h=team[role]?.hero;if(h&&seen.has(h)){team[role].hero="";found--;}else if(h)seen.add(h);}
+    }
+    if(!votes.top&&!votes.bottom)issues.push("Couldn't read your gamertag. Confirm which team is yours.");
+    if(found<10)issues.push(`${10-found} hero slots need confirmation.`);
+    return {ours,theirs,issues,found,oursRow,method:"straightened card crops"};
+  }
+
   // ---------- main ----------
   async function scan(file, heroes, squad, onProgress = () => {}) {
     const src = await toCanvas(file);
+    if(file._screenAligned) return alignedLoading(src,heroes,squad,onProgress);
     const W = src.width, H = src.height;
     const scale = Math.max(1, 4000 / W);
     const heroDict = heroes.map(h => ({ slug: h.slug, key: letters(h.name) })).filter(d => d.key.length >= 3);
@@ -152,6 +184,13 @@
       }
     }
 
+    if (new Set(hits.map(h => h.slug)).size < 10) {
+      onProgress("Reading dim text…", 0.7);
+      const passE = await words(prep(src, {scale, mode:"gray"}), {tessedit_pageseg_mode:"11"});
+      const passF = await words(prep(src, {scale, mode:"green",thr:130}), {tessedit_pageseg_mode:"11"});
+      hits.push(...findHeroes(passE,heroDict,scale),...findHeroes(passF,heroDict,scale));
+      passC=passC.concat(passE,passF);
+    }
     // keep the best hit per place on screen
     hits.sort((a, b) => b.s - a.s || b.len - a.len);
     const cand = [];
@@ -220,7 +259,15 @@
       if (grid[theirRow][i]) theirs[role] = { hero: grid[theirRow][i].slug };
     });
     for (const [key, role] of Object.entries(who)) (ours[role] ||= {}).who = key;
-    const missing = 10 - Object.keys(ours).filter(r => ours[r].hero).length - Object.keys(theirs).length;
+    for (const team of [ours, theirs]) {
+      const seen = new Map();
+      for (const role of ROLES) if (team[role]?.hero) {
+        const hero = team[role].hero;
+        if (seen.has(hero)) { team[role].hero = ""; issues.push(`Duplicate ${hero} read: check ${role.toLowerCase()}.`); }
+        else seen.set(hero,role);
+      }
+    }
+    const missing = 10 - Object.keys(ours).filter(r => ours[r].hero).length - Object.keys(theirs).filter(r => theirs[r].hero).length;
     if (missing > 0) issues.push(`${missing} hero${missing > 1 ? "es" : ""} not read — pick ${missing > 1 ? "them" : "it"} below.`);
     onProgress("Done", 1);
     return { ours, theirs, issues, found: cand.length, labels: labels.map(l => l.slug), oursRow };

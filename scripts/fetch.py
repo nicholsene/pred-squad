@@ -108,7 +108,7 @@ def load(name: str, default):
     return json.loads(p.read_text()) if p.exists() else default
 
 
-def save(name: str, obj) -> None:
+def save(name: str, obj) -> bool:
     """Write obj, but leave the file untouched if only the updatedAt stamp would change
     (keeps the scheduled job from committing every run)."""
     DATA.mkdir(parents=True, exist_ok=True)
@@ -116,9 +116,13 @@ def save(name: str, obj) -> None:
     if p.exists() and isinstance(obj, dict):
         old = json.loads(p.read_text())
         strip = lambda d: {k: v for k, v in d.items() if k != "updatedAt"} if isinstance(d, dict) else d
-        if strip(old) == strip(obj):
-            return
-    p.write_text(json.dumps(obj, separators=(",", ":"), ensure_ascii=False))
+        if name != "status.json" and strip(old) == strip(obj):
+            return False
+    text = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(text)
+    tmp.replace(p)
+    return True
 
 
 def pct(x):
@@ -267,13 +271,14 @@ def fetch_meta(api: PredGG, heroes: list[dict], patch: str, version_ids: list[st
     out = {"updatedAt": now_iso(), "patch": patch, "mode": "RANKED", "heroes": {},
            "matchupsAvailable": True}
     modes = ["RANKED"]
+    failures = []
     for h in heroes:
         for role in h["roles"]:
             f = {"roles": [role], "versions": version_ids, "gameModes": modes}
             try:
                 d = api.query(META_GENERAL_Q, {"slug": h["slug"], "f": f})["hero"]
             except PredGGError as e:
-                print(f"  meta {h['slug']}/{role}: {e}")
+                failures.append(f"{h['slug']}/{role}: {e}")
                 continue
             g = ((d.get("generalStatistic") or {}).get("result")) or {}
             games, wins = g.get("matchesPlayed") or 0, g.get("matchesWon") or 0
@@ -302,6 +307,8 @@ def fetch_meta(api: PredGG, heroes: list[dict], patch: str, version_ids: list[st
                 "wr": round(100 * wins / games, 2) if games else None,
                 "matchups": matchups, "builds": builds,
             }
+    if failures:
+        raise PredGGError("Incomplete meta refresh; keeping last good meta: " + "; ".join(failures[:3]))
     return out
 
 
@@ -312,50 +319,55 @@ def main() -> int:
     args = ap.parse_args()
 
     api = PredGG()
-    status = {"updatedAt": now_iso(), "authenticated": api.has_credentials, "errors": []}
-    # the site only needs labels and targets, not pred.gg ids
-    save("squad.json", {"players": [{"key": p["key"], "label": p["label"]} for p in CONFIG["players"]],
-                        "targets": CONFIG["targets"]})
+    previous = load("status.json", {})
+    status = {"updatedAt": now_iso(), "authenticated": api.has_credentials, "errors": [],
+              "datasets": previous.get("datasets", {})}
 
-    print("heroes…")
-    heroes = fetch_heroes(api)
-    patch, version_ids = current_patch(api)
-    save("heroes.json", {"updatedAt": now_iso(), "patch": patch, "heroes": heroes})
-    print(f"  {len(heroes)} heroes, patch {patch}")
-    try:
-        save("ranks.json", {"updatedAt": now_iso(), **fetch_ranks(api)})
-    except PredGGError as e:
-        status["errors"].append(f"ranks: {e}")
-    try:
-        items = fetch_items(api)
-        save("items.json", {"updatedAt": now_iso(), "patch": patch, "items": items})
-        print(f"  {len(items)} items")
-    except PredGGError as e:
-        status["errors"].append(f"items: {e}")
-        print(f"  items: {e}")
+    def refresh(name, callback):
+        record = dict(status["datasets"].get(name, {}))
+        record["lastChecked"] = now_iso()
+        try:
+            obj = callback()
+            # Reject empty or malformed responses rather than replacing usable data.
+            for key in ("heroes", "items", "matches", "ranks"):
+                if key in obj and (not isinstance(obj[key], (list, dict)) or (key != "matches" and not obj[key])):
+                    raise PredGGError(f"Invalid {key} dataset")
+            changed = save(name, obj)
+            record["lastSuccess"] = now_iso()
+            if changed:
+                record["lastChanged"] = now_iso()
+            record.pop("error", None)
+            return obj
+        except (PredGGError, ValueError, KeyError, TypeError) as e:
+            record["error"] = str(e)
+            status["errors"].append(f"{name}: {e}")
+            print(f"  {name}: {e}")
+            return load(name, {})
+        finally:
+            status["datasets"][name] = record
 
+    refresh("squad.json", lambda: {"players": [{"key": p["key"], "label": p["label"]} for p in CONFIG["players"]], "targets": CONFIG["targets"]})
+    hero_file = refresh("heroes.json", lambda: {"updatedAt": now_iso(), "patch": current_patch(api)[0], "heroes": fetch_heroes(api)})
+    refresh("ranks.json", lambda: {"updatedAt": now_iso(), **fetch_ranks(api)})
+    refresh("items.json", lambda: {"updatedAt": now_iso(), "patch": current_patch(api)[0], "items": fetch_items(api)})
     if not api.has_credentials:
-        msg = "No pred.gg API credentials set; match history and meta need them."
-        print("  " + msg)
-        status["errors"].append(msg)
+        status["errors"].append("No pred.gg credentials; retaining match history and meta.")
     else:
         if not args.skip_matches:
-            print("matches…")
-            try:
-                save("matches.json", fetch_matches(api, load("matches.json", {})))
-            except PredGGError as e:
-                status["errors"].append(f"matches: {e}")
-                print(f"  {e}")
+            refresh("matches.json", lambda: fetch_matches(api, load("matches.json", {})))
         if not args.skip_meta:
-            print("meta…")
-            try:
-                save("meta.json", fetch_meta(api, heroes, patch, version_ids))
-            except PredGGError as e:
-                status["errors"].append(f"meta: {e}")
-                print(f"  {e}")
-
-    save("status.json", status)
-    return 1 if status["errors"] and api.has_credentials else 0
+            def meta_data():
+                patch, ids = current_patch(api)
+                if hero_file.get("patch") != patch:
+                    raise PredGGError("Hero catalogue is stale; keeping previous meta")
+                return fetch_meta(api, hero_file.get("heroes", []), patch, ids)
+            refresh("meta.json", meta_data)
+    if not status["errors"]:
+        status["lastSuccess"] = now_iso()
+    elif previous.get("lastSuccess"):
+        status["lastSuccess"] = previous["lastSuccess"]
+    save("status.json", status)  # heartbeat: actual check time, even if match history is unchanged
+    return 1 if status["errors"] else 0
 
 
 if __name__ == "__main__":

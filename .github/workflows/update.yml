@@ -2,10 +2,10 @@ name: Update squad data
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 min; meta is refreshed once a day below
+    - cron: "0,30 * * * *"   # every 30 min; meta is refreshed once a day below
   push:                        # also run when the fetcher or config changes
     branches: [main]
-    paths: ["scripts/**", "config/**", ".github/workflows/update.yml"]
+    paths: ["docs/**", "!docs/data/**", "scripts/**", "config/**", "requirements.txt", ".github/**"]
   workflow_dispatch:
     inputs:
       meta:
@@ -28,23 +28,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install requests
+      - run: pip install -r requirements.txt
       - name: Decide whether to refresh meta
         id: meta
         run: |
           stale=$(python -c "import json,datetime as d;m=json.load(open('docs/data/meta.json'));t=d.datetime.fromisoformat(m['updatedAt'].replace('Z','+00:00'));print(int((d.datetime.now(d.timezone.utc)-t).total_seconds()>72000))" 2>/dev/null || echo 1)
-          if [ "${{ inputs.meta }}" = "true" ] || [ "$stale" = "1" ]; then
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.meta }}" = "true" ] || [ "$stale" = "1" ]; then
             echo "flag=" >> "$GITHUB_OUTPUT"
           else
             echo "flag=--skip-meta" >> "$GITHUB_OUTPUT"
           fi
       - name: Fetch from pred.gg
+        id: fetch
+        continue-on-error: true
         env:
           PREDGG_CLIENT_ID: ${{ secrets.PREDGG_CLIENT_ID }}
           PREDGG_CLIENT_SECRET: ${{ secrets.PREDGG_CLIENT_SECRET }}
           PREDGG_REFRESH_TOKEN: ${{ secrets.PREDGG_REFRESH_TOKEN }}
         run: python scripts/fetch.py ${{ steps.meta.outputs.flag }}
-      - name: Commit if changed
+      - name: Commit successful datasets and refresh heartbeat
+        if: ${{ !cancelled() && steps.fetch.outcome != 'skipped' }}
         run: |
           git config user.name "squad-bot"
           git config user.email "squad-bot@users.noreply.github.com"
@@ -53,3 +56,8 @@ jobs:
           git commit -m "data: update $(date -u +%Y-%m-%dT%H:%MZ)"
           git pull --rebase origin main
           git push
+      - name: Report incomplete refresh
+        if: steps.fetch.outcome == 'failure'
+        run: |
+          echo "Successful datasets were published; inspect docs/data/status.json for failed stages."
+          exit 1

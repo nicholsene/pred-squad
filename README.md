@@ -1,3 +1,5 @@
+> Match planning improvements and verification: see [RELEASE.md](RELEASE.md).
+
 # Squad Planner (Predecessor)
 
 A private tool for stealinNICKELS, DiMu and inFamoUs. It pulls your matches from
@@ -62,7 +64,8 @@ Edit `config/squad.json`. Each player needs their pred.gg ID, the UUID in their 
 ## Development
 ```
 python tests/test_fetch.py   # offline fetcher test with fake API data
-node tests/test_engine.js    # engine tests
+node tests/test_engine.js    # engine tests (generates fixture when missing)
+node tests/test_session.js   # lifecycle and objective regression tests
 python scripts/fetch.py      # live fetch (needs the secrets as env vars)
 ```
 

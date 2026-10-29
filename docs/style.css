@@ -474,3 +474,27 @@ table.fit td { overflow-wrap: anywhere; }
 .bl-side { white-space: nowrap; }
 table.cm th.num, table.cm td.num { width: 70px; }
 table.cm th:last-child { width: 30%; }
+
+/* Match setup, review and objective tools */
+#lifecycle, #scan-review, #map-review, #postmatch { margin:12px 0; }
+.draft-grid, .objective-grid, .review-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+#draft-controls label, #scan-review label, #map-review label { display:block; margin:8px 0; }
+#draft-controls select, #scan-review input, #scan-review select { width:100%; }
+#map-canvas { width:100%; height:auto; touch-action:none; cursor:crosshair; }
+#map-review img { max-width:100%; }
+dialog { color:var(--ink,#edf1ff); background:var(--bg,#171c29); border:1px solid #68718c; border-radius:16px; padding:24px; max-width:min(90vw,520px); }
+dialog::backdrop { background:rgba(0,0,0,.7); }
+dialog button { margin:6px; }
+.objective-row { border-bottom:1px solid #68718c44; padding:12px 0; }
+.objective-row input { max-width:100px; }
+.scan-table input { min-width:48px; max-width:85px; }
+.sync-note { font-size:12px; margin:8px 0; }
+
+input.uncertain { outline:2px solid #c58a19; background:#c58a1922; }
+
+.camera-dialog { width:min(92vw,720px); max-width:720px; max-height:92vh; overflow:auto; }
+.camera-stage { position:relative; width:100%; background:#05070b; overflow:hidden; border-radius:10px; }
+.camera-stage video { display:block; width:100%; height:55vh; object-fit:contain; }
+.camera-guide { position:absolute; border:2px solid #a8ffcb; box-shadow:0 0 0 100vmax #0008; pointer-events:none; }
+.camera-card,.camera-row { position:absolute; display:block; border:1px solid #ffffff80; border-radius:3px; background:#ffffff08; }
+.camera-cross { position:absolute; inset:48%; border:1px solid #fff9; }

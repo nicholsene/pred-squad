@@ -105,9 +105,9 @@
   }
 
   /* ---------- OCR helpers (shared Tesseract worker from scan.js) ---------- */
-  async function ocrBox(src, f, box, params, up = 2, thr = 175) {
+  async function ocrBox(src, f, box, params, up = 2, thr = 175, mode = "max") {
     const K = root.ScanKit;
-    const c = K.prep(src, { x: box[0] / (2 * f), y: box[1] / (2 * f), w: (box[2] - box[0]) / (2 * f), h: (box[3] - box[1]) / (2 * f), scale: 2 * f * up, mode: "max", thr });
+    const c = K.prep(src, { x: box[0] / (2 * f), y: box[1] / (2 * f), w: (box[2] - box[0]) / (2 * f), h: (box[3] - box[1]) / (2 * f), scale: 2 * f * up, mode, thr });
     const lines = await K.words(c, params);
     return lines.map(l => l.map(w => w.t).join(" ")).join(" ").trim();
   }
@@ -141,11 +141,31 @@
   /* ---------- main ---------- */
   async function scan(file, opts = {}) {
     const { heroes = [], known = {}, onProgress = () => {} } = opts;
+    if (file._originalSource && !opts._singlePass) {
+      onProgress("Comparing original and straightened reads…", .02);
+      const original = await scan(file._originalSource, {...opts,_singlePass:true});
+      const corrected = await scan(file, {...opts,_singlePass:true});
+      let disagreements=0;
+      for (const side of ["ours","theirs"]) for (let i=0;i<5;i++) {
+        const raw=original[side]?.[i]||{}, row=corrected[side]?.[i]; if(!row)continue;
+        if(!row.hero)row.hero=raw.hero||null;
+        row.alternatives={};
+        for(const key of ["lvl","k","d","a","gold"]) {
+          if(raw[key]!=null && row[key]!=null && raw[key]!==row[key]) { row.alternatives[key]=[raw[key],row[key]]; disagreements++; }
+          // Keep the established original-photo digit path; corrected crops fill blanks.
+          if(raw[key]!=null)row[key]=raw[key];
+        }
+      }
+      corrected.issues = disagreements ? [`${disagreements} number reads disagree between views. Check the highlighted fields.`] : corrected.issues;
+      corrected.method="original digits with straightened hero/crop fallback";
+      return corrected;
+    }
     const K = root.ScanKit, T = await templates();
     onProgress("Reading the scoreboard…", 0.05);
     const src = await K.toCanvas(file), f = BASE_W / src.width;
     const W = 2 * BASE_W, H = 2 * src.height * f, issues = [];
-    const golds = (await anchors(src, f)).filter(g => g.y > H * 0.15);
+    const aligned = !!file._screenAligned;
+    const golds = aligned ? [] : (await anchors(src, f)).filter(g => g.y > H * 0.15);
     onProgress("Finding rows…", 0.35);
     const sides = {};
     for (const [side, sel] of [["L", g => g.x < W / 2], ["R", g => g.x >= W / 2]]) {
@@ -153,9 +173,9 @@
       if (gs.length) { const mx = median(gs.map(g => g.x)); gs = gs.filter(g => Math.abs(g.x - mx) < W * 0.04); }
       sides[side] = gs.sort((a, b) => a.y - b.y);
     }
-    if (!sides.L.length && !sides.R.length) return { ours: [], theirs: [], issues: ["Couldn't find the scoreboard. Take the photo straight on with the whole board in frame."] };
-    const u = fitDy(Object.values(sides).filter(s => s.length >= 2).map(s => s.map(g => g.y)), H) || H * 0.11;
-    const tops = {};
+    if (!aligned && !sides.L.length && !sides.R.length) return { ours: [], theirs: [], issues: ["Couldn't find the scoreboard. Take the photo straight on with the whole board in frame."] };
+    const u = aligned ? H * .135 : fitDy(Object.values(sides).filter(s => s.length >= 2).map(s => s.map(g => g.y)), H) || H * 0.11;
+    const tops = aligned ? { L:{y0:H*.32,x0:W*.417,dx:0,span:4,off:0},R:{y0:H*.32,x0:W*.58,dx:0,span:4,off:0} } : {};
     for (const [side, gs] of Object.entries(sides)) {
       if (!gs.length) continue;
       const idx = gs.map(g => Math.round((g.y - gs[0].y) / u));
@@ -212,6 +232,7 @@
         const near = sides[side].find(g => Math.abs(g.y - gy) < 0.3 * u);
         let m = near && GOLD.exec(near.t);
         if (!m) m = GOLD.exec(await ocrBox(src, f, [gx - 0.45 * u, gy - 0.11 * u, gx + 0.45 * u, gy + 0.11 * u], { tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789,g" }));
+        if (!m && aligned) m = GOLD.exec(await ocrBox(src,f,[gx-.5*u,gy-.14*u,gx+.5*u,gy+.14*u],{tessedit_pageseg_mode:"7",tessedit_char_whitelist:"0123456789,g"},3,140,"gray"));
         if (m) row.gold = parseInt(m[1] + m[2], 10);
         // hero name, only if the lineup isn't known
         if (!row.hero && heroDict.length) {
@@ -231,6 +252,10 @@
           let txt = await read(hb, "7", 175), best = match(txt);
           if (!best) { txt = await read([hb[0], gy - 0.62 * u, hb[2], gy - 0.26 * u], "6", 175); best = match(txt); }
           if (!best) { txt = await read(hb, "7", 140); best = match(txt); }
+          if (!best) {
+            txt = (await ocrBox(src,f,hb,{tessedit_pageseg_mode:"7",tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ.& "},3,140,"gray")).toUpperCase().replace(/[^A-Z]/g, "");
+            best = match(txt);
+          }
           if (opts.debug) row._hero = txt;
           if (best) row.hero = best[1];
         }

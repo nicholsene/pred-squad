@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .env
 tests/fixture_matches.json
+
+.test-deps/
+.test-artifacts/
