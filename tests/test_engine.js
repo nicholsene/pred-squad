@@ -1,7 +1,10 @@
 // Engine sanity tests on synthetic data.  Run: node tests/test_engine.js
 const assert = require("assert");
 const E = require("../docs/engine.js");
-const fx = require("./fixture_matches.json");
+const fs = require("fs");
+const fixture = require("path").join(__dirname,"fixture_matches.json");
+if (!fs.existsSync(fixture)) require("child_process").execFileSync(process.env.PYTHON || "python3", [require("path").join(__dirname,"test_fetch.py")]);
+const fx = require(fixture);
 
 const heroes = ["greystone", "sparrow", "khaimera", "crunch", "steel", "phase", "renna", "legion", "terra", "aurora"].map(s => ({
   slug: s, name: s[0].toUpperCase() + s.slice(1), roles: E.ROLES, skills: ["PRIMARY", "SECONDARY", "ALTERNATE", "PRIMARY", "PRIMARY", "ULTIMATE"],
@@ -66,7 +69,7 @@ assert.deepStrictEqual(plan.squadHere, ["DiMu", "inFamoUs", "stealinNICKELS"]);
 assert.strictEqual(plan.threats[0].hero, "khaimera", "fed enemy should top threats");
 assert(plan.members.stealinNICKELS.rules.some(r => /behind-mode/.test(r.text)));
 assert(plan.members.stealinNICKELS.rules.some(r => /Wards 1/.test(r.text)));
-assert.strictEqual(plan.next.label, "Fangtooth respawn");
+assert.strictEqual(plan.next.label, "Orb Prime");
 assert(plan.lanes.find(l => l.role === "OFFLANE").ev.matchup, "meta matchup used for greystone vs terra");
 const empty2 = E.matchPlan(E.context([], heroes, null), {}, {}, null, {});
 assert.strictEqual(empty2.lanes.length, 5);
@@ -112,3 +115,14 @@ const rsp = IL.respond(lab, [{ hero: "khaimera", items: ["Leech", "Leech"] }, { 
 const heal = rsp.calls.find(c => c.threat.key === "heal");
 assert(heal && heal.pick && /Rot/.test(heal.pick.item.label), "heavy lifesteal should call for anti-heal");
 console.log("ok: item lab", Object.keys(lab.price).length, "stat prices;", rsp.calls.length, "respond calls");
+
+// Role-specific matchup evidence is disjoint from baseline evidence.
+const single={member:"a",role:"CARRY",hero:"h",together:["a"],win:true,laneOpponents:[{hero:"enemy"}]};
+const plain=E.heroScore([single],null,"a","CARRY","h",["a"],null);
+const versus=E.heroScore([single],null,"a","CARRY","h",["a"],"enemy");
+assert.strictEqual(plain.score,versus.score,"same win cannot be counted twice");
+assert.strictEqual(E.heroScore([single],null,"a","MIDLANE","h",["a"],"enemy").vsOpp.games,0);
+assert.deepStrictEqual(E.suggestLineups(ctx,[]),[]);
+const locked=E.suggestLineups(ctx,["DiMu","inFamoUs"],3,{locks:{DiMu:{role:"JUNGLE"}},excluded:["aurora"]});
+for(const l of locked){assert.equal(l.roles.DiMu,"JUNGLE");assert(!Object.values(l.chosenHeroes).includes("aurora"));assert.equal(new Set(Object.values(l.chosenHeroes)).size,2);}
+console.log("ok: regression scoring, draft locks and distinct heroes");

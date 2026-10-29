@@ -1,0 +1,29 @@
+name: App checks
+on:
+  pull_request:
+  push:
+    branches: [main, 'feat/**']
+    paths-ignore: ['docs/data/**']
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - run: python tests/test_predgg.py
+      - run: python tests/test_fetch.py
+      - run: node tests/test_engine.js
+      - run: node tests/test_session.js
+      - run: |
+          for file in docs/*.js; do node --check "$file"; done
+      - run: npm install --no-save --package-lock=false playwright@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/test_browser.cjs

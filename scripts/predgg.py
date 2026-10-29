@@ -47,7 +47,18 @@ class PredGG:
             return
         refresh = os.environ.get("PREDGG_REFRESH_TOKEN")
         data = {"grant_type": "refresh_token", "refresh_token": refresh} if refresh else {"grant_type": "client_credentials"}
-        r = self.s.post(TOKEN_URL, data=data, auth=(cid, secret), timeout=30)
+        for attempt in range(4):
+            try:
+                r = self.s.post(TOKEN_URL, data=data, auth=(cid, secret), timeout=30)
+            except requests.RequestException:
+                if attempt == 3:
+                    raise
+                time.sleep(2 ** attempt)
+                continue
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(min(30, 2 ** (attempt + 1)))
+                continue
+            break
         if r.status_code != 200:
             raise PredGGError(f"token request failed: HTTP {r.status_code} {r.text[:300]}")
         body = r.json()

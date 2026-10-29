@@ -47,6 +47,7 @@
       </div>
     </div>
     <div id="stats" class="grid"></div>
+    <div id="progress"></div>
     <div id="itemlab"></div>
   </section>
 
@@ -54,7 +55,8 @@
     <div class="card-head">
       <h2 id="sug-h"><span class="step">3</span>Suggested lanes &amp; heroes</h2>
     </div>
-    <p class="note">Estimated win chances. They start from the patch meta and lean toward your own results as games pile up, so one lucky win can't outrank a proven pick.</p>
+    <p class="note">Recommendation scores blend your results with patch meta. They are not calibrated win probabilities. Small samples mean more uncertainty.</p>
+    <div id="draft-controls" class="tile"></div>
     <div id="suggest"></div>
   </section>
 
@@ -63,9 +65,12 @@
       <h2 id="match-h"><span class="step">4</span>Live match</h2>
       <select id="me" class="me" aria-label="Who are you"></select>
     </div>
+    <div id="lifecycle" class="tile"></div>
     <div id="room" class="tile room"></div>
+    <div id="scan-review" class="tile" hidden></div>
 
     <div class="match-tools">
+      <button class="chip cta" id="camera-open" type="button">Camera with alignment guide</button>
       <label class="chip cta scan-btn"><input type="file" id="scan-file" accept="image/*" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Scan loading screen</label>
       <label class="toggle"><input type="checkbox" id="wake"><span class="track"><span class="knob"></span></span><span>Keep screen on</span></label>
@@ -87,6 +92,11 @@
     <div id="board-progress" class="scan-progress" hidden><div class="bar-meter"><i></i></div><span class="muted"></span></div>
     <div id="board"></div>
     <div id="tracker"></div>
+    <div class="sub-h">Objective tracker</div>
+    <div id="objectives" class="tile"></div>
+    <label class="chip cta scan-btn"><input type="file" id="map-file" accept="image/*" hidden>Scan minimap timer</label>
+    <div id="map-review" class="tile" hidden></div>
+    <div id="postmatch" class="tile" hidden></div>
 
     <div class="sub-h">Strategy</div>
     <div id="strategy"></div>
@@ -104,7 +114,12 @@
 
 <script src="engine.js"></script>
 <script src="itemlab.js"></script>
+<script src="photo-prep.js"></script>
+<script src="camera.js"></script>
 <script src="scan.js"></script>
+<script src="session.js"></script>
+<script src="minimap.js"></script>
+<script src="insights.js"></script>
 <script src="app.js"></script>
 <script>if ("serviceWorker" in navigator) {
   const had = !!navigator.serviceWorker.controller; let done = false;

@@ -1,0 +1,29 @@
+const assert=require("node:assert/strict");
+const M=require("../docs/session.js"), Scan=require("../docs/minimap.js");
+const plan={roles:{a:"MIDLANE",b:"CARRY"},heroes:{a:"gideon",b:"sparrow"}};
+const s=M.fromPlan(plan,"test");
+assert.equal(s.stage,"draft");assert.equal(s.setup.ours.MIDLANE.who,"a");assert.equal(s.setup.ours.CARRY.hero,"sparrow");
+assert.throws(()=>M.start(s,"",1000));
+const live=M.start(s,"a",1000);assert.equal(live.stage,"live");assert.equal(s.stage,"draft");
+assert.equal(M.parseTime("3:45"),225);assert.equal(M.parseTime("3:99"),null);
+assert.equal(M.objectiveStatus(null,600).text,"Unknown");
+const e=M.objectiveEvent("countdown",600,120,"scan","a");assert.equal(e.respawnAt,720);
+assert.equal(M.objectiveStatus(e,650).remaining,70);assert.equal(M.objectiveStatus(e,730).text,"Expected available — check map");
+assert.throws(()=>M.objectiveEvent("countdown",null,120,"scan","a"));
+assert.equal(M.objectiveEvent("defeated",600,null,"manual","a").respawnAt,null);
+assert(M.validateSetup({ours:{CARRY:{who:"a",hero:"x"},MIDLANE:{who:"a",hero:"x"}}}).length>=2);
+assert.deepEqual(Scan.candidates([[{t:"2:35",c:80}]]).map(x=>x.seconds),[155]);
+assert.deepEqual(Scan.candidates([[{t:"2:99",c:80}]]),[]);
+assert.throws(()=>M.validateBoard({ours:[],theirs:[]}));
+console.log("ok: plan handoff, identity, lifecycle, timer parsing, unknown states and scan validation");
+
+const P=require("../docs/photo-prep.js");
+const h=P.mapping([{x:10,y:20},{x:110,y:20},{x:110,y:70},{x:10,y:70}]);
+assert(Math.abs(h[0]-100)<1e-6 && Math.abs(h[4]-50)<1e-6 && Math.abs(h[2]-10)<1e-6);
+assert.throws(()=>P.mapping([{x:0,y:0},{x:0,y:0},{x:0,y:0},{x:0,y:0}]));
+console.log("ok: perspective mapping and degenerate corner rejection");
+
+assert.deepEqual(Scan.candidates([[{t:"36",c:90}]]).map(x=>x.seconds),[36]);
+assert.equal(Scan.candidates([[{t:"2m+",c:90}]])[0].seconds,null);
+assert.equal(Scan.candidates([[{t:"2m+",c:90}]])[0].minSeconds,120);
+console.log("ok: seconds-only minimap counters and approximate timer rejection");

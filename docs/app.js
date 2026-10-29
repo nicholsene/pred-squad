@@ -20,6 +20,19 @@
     load("status.json", null),
     load("items.json", { items: [] }),
   ]);
+  // A durable handoff exists before the asynchronously loaded Match module.
+  let queuedPlan = null;
+  try { queuedPlan = JSON.parse(localStorage.getItem("squad-pending-plan") || "null"); } catch {}
+  window.SquadHandoff = {
+    pending: queuedPlan,
+    submit(plan) {
+      this.pending = plan;
+      try { localStorage.setItem("squad-pending-plan", JSON.stringify(plan)); } catch {}
+      window.__showTab("match");
+      document.dispatchEvent(new CustomEvent("squad:plan"));
+    },
+    clear() { this.pending = null; try { localStorage.removeItem("squad-pending-plan"); } catch {} },
+  };
   // item lab is built on first use (~0.4s); counters use every stored match for a bigger sample
   let lab = null;
   const getLab = () => lab || (window.ItemLab && (itemsF.items || []).length && allMatches.some(m => m.players.some(p => p.items))
@@ -29,7 +42,13 @@
   // Ranked-only filter (per device). Everything downstream reads `matches` / `ctx`.
   let rankedOnly = (() => { try { return localStorage.getItem("squad-ranked") === "1"; } catch { return false; } })();
   let matches, ctx;
-  const applyMode = () => { matches = rankedOnly ? allMatches.filter(m => m.mode === "RANKED") : allMatches; ctx = E.context(matches, heroes, meta); };
+  let historyFilter = "all";
+  const applyMode = () => {
+    matches = rankedOnly ? allMatches.filter(m => m.mode === "RANKED") : allMatches;
+    if (historyFilter === "patch") matches = matches.filter(m => String(m.patch).split(".").slice(0,2).join(".") === String(heroesF.patch).split(".").slice(0,2).join("."));
+    if (/^last/.test(historyFilter)) matches = matches.slice().sort((a,b) => String(b.start).localeCompare(String(a.start))).slice(0, Number(historyFilter.slice(4)));
+    ctx = E.context(matches, heroes, meta);
+  };
   applyMode();
   const T = Object.assign({ maxDeaths: 4, minWards: 4, minObjectiveDamage: 1 }, squad.targets || {});
   const heroName = slug => (heroes.find(h => h.slug === slug) || {}).name || slug || "?";
@@ -46,7 +65,14 @@
   const showStatus = () => {
     st.textContent = bits.concat(`${matches.length} ${rankedOnly ? "ranked " : ""}matches`, heroesF.patch ? [`Patch ${heroesF.patch}`] : []).join(" · ");
   };
+  if (status?.updatedAt) bits.push(`Checked ${new Date(status.updatedAt).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}`);
+  if (new Set([heroesF.patch, itemsF.patch, meta?.patch].filter(Boolean)).size > 1) bits.push("Patch data differs — recommendations may be stale");
+  if (status?.errors?.length) bits.push("Refresh incomplete: " + status.errors[0]);
   showStatus();
+  const history = document.createElement("select"); history.setAttribute("aria-label", "History period");
+  history.innerHTML = '<option value="all">All history</option><option value="last10">Last 10 matches</option><option value="last20">Last 20 matches</option><option value="patch">Current patch</option>';
+  document.querySelector(".status-row").append(history);
+  history.onchange = () => { historyFilter = history.value; applyMode(); window.__app.ctx = ctx; render(); window.__matchRender?.(); };
   const modeSw = $("#mode-switch");
   const paintMode = () => modeSw.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", (b.dataset.mode === "ranked") === rankedOnly));
   paintMode();
@@ -178,6 +204,15 @@
     const base = state.scope === "group" ? groupRows() : ctx.rows;
     $("#stats").innerHTML = s.map(m => statTile(m, base.filter(r => r.member === m))).join("");
     renderItemLab();
+    renderProgress();
+  }
+
+  function renderProgress() {
+    const el = $("#progress"); if (!el) return;
+    el.innerHTML = '<h3 class="sub">Recent progress</h3><div class="grid">' + sel().map(m => {
+      const p = window.SquadInsights.progress(matches, m, T);
+      return `<div class="tile"><h3>${esc(label(m))}</h3><p>${p.games} recent games · ${pct(p.wr)} wins</p><p>${esc(p.focus)}</p><p class="note">Wards / 10 min: ${num(p.wards10)} · Deaths / 10 min: ${num(p.deaths10)}${p.previousWr == null ? "" : ` · Previous ${p.previousGames}: ${pct(p.previousWr)} wins`}</p></div>`;
+    }).join("") + '</div>';
   }
 
   // ---------- item lab ----------
@@ -202,7 +237,7 @@
     const counters = L.counters.map(c => {
       const a = c.answered, b = c.unanswered, wr = x => x.games ? pct(x.wins / x.games) : "—";
       const verdict = Math.min(a.games, b.games) < 8 ? '<span class="muted">too few games</span>'
-        : c.lift > 0.04 ? '<span class="good">answering helped</span>' : c.lift < -0.04 ? '<span class="bad">answering didn\'t help</span>' : '<span class="muted">no clear difference</span>';
+        : c.lift > 0.04 ? '<span class="good">higher win rate with answer</span>' : c.lift < -0.04 ? '<span class="bad">lower win rate with answer</span>' : '<span class="muted">no clear difference</span>';
       return `<tr><td><b>${esc(c.label)}</b><br><span class="muted">answer: ${esc(c.answer)}</span></td><td class="num">${rec(a)}<br><span class="muted">${wr(a)}</span></td><td class="num">${rec(b)}<br><span class="muted">${wr(b)}</span></td><td>${verdict}</td></tr>`;
     }).join("");
     const value = Object.values(L.C).filter(i => L.core(i.name) && !i.hidden && L.eff[i.name]).map(i => ({ i, e: L.eff[i.name] })).sort((a, b) => b.e - a.e);
@@ -246,17 +281,31 @@
     const ev = [];
     if (h.inSquad.games) ev.push(`${wl(h.inSquad)} with group`);
     if (h.personal.games) ev.push(`${wl(h.personal)} overall`);
+    if (h.personal.games < 5) ev.push("Limited personal evidence");
     if (h.meta && h.meta.wr != null) ev.push(`meta ${h.meta.wr.toFixed(1)}%`);
     return `<span class="pill" title="${esc(ev.join(" · "))}"><b>${esc(heroName(h.hero))}</b> ${pct(h.score)}${ev.length ? ` <span class="muted">· ${esc(ev[0])}</span>` : ""}</span>`;
   }
 
+  let draft = { locks: {}, excluded: [], familiar: false };
+  function renderDraft() {
+    const el = $("#draft-controls");
+    el.innerHTML = `<h3>Draft preferences</h3><div class="draft-grid">${sel().map(m => `<label>${esc(label(m))} lane<select data-lock="${esc(m)}"><option value="">Any lane</option>${E.ROLES.map(r => `<option value="${r}" ${draft.locks[m]?.role === r ? "selected" : ""}>${roleName(r)}</option>`).join("")}</select><select data-hero-lock="${esc(m)}" aria-label="${esc(label(m))} hero"><option value="">Any hero</option>${heroes.map(h => `<option value="${esc(h.slug)}" ${draft.locks[m]?.hero === h.slug ? "selected" : ""}>${esc(h.name)}</option>`).join("")}</select></label>`).join("")}</div>
+      <label>Banned / excluded heroes<select id="draft-bans" multiple size="3">${heroes.map(h => `<option value="${esc(h.slug)}" ${draft.excluded.includes(h.slug) ? "selected" : ""}>${esc(h.name)}</option>`).join("")}</select></label>
+      <label><input type="checkbox" id="draft-familiar" ${draft.familiar ? "checked" : ""}> Familiar heroes only (played in this lane)</label>`;
+    el.querySelectorAll("[data-lock]").forEach(x => x.onchange = () => { draft.locks[x.dataset.lock] = { ...draft.locks[x.dataset.lock], role:x.value }; renderSuggest(); });
+    el.querySelectorAll("[data-hero-lock]").forEach(x => x.onchange = () => { draft.locks[x.dataset.heroLock] = { ...draft.locks[x.dataset.heroLock], hero:x.value }; renderSuggest(); });
+    $("#draft-bans").onchange = e => { draft.excluded = [...e.target.selectedOptions].map(o => o.value); renderSuggest(); };
+    $("#draft-familiar").onchange = e => { draft.familiar = e.target.checked; renderSuggest(); };
+  }
   function renderSuggest() {
     const s = sel();
-    const L = E.suggestLineups(ctx, s, 3);
+    renderDraft();
+    const L = E.suggestLineups(ctx, s, 3, draft);
+    if (!L.length) { $("#suggest").innerHTML = '<p class="warn">No legal lineup matches these preferences. Unlock a lane or hero, or revise excluded heroes.</p>'; return; }
     $("#suggest").innerHTML = L.map((l, i) => `<div class="lineup ${i === 0 ? "top1" : ""}">
       <div class="lineup-head">
         <span>${i === 0 ? '<span class="badge">Best bet</span>' : `<b>Option ${i + 1}</b>`}</span>
-        <span class="chance"><strong>${pct(l.score)}</strong> est. · ${l.lineupRecord ? `${l.lineupRecord.wins}–${l.lineupRecord.games - l.lineupRecord.wins} as this lineup` : "new lineup"}</span>
+        <span class="chance"><strong>${Math.round(l.score * 100)}/100</strong> score · ${l.lineupRecord ? `${l.lineupRecord.wins}–${l.lineupRecord.games - l.lineupRecord.wins} as this lineup` : "new lineup"}</span>
       </div>
       <div class="assign">${s.map(m => {
         const p = l.parts.find(x => x.member === m);
@@ -267,7 +316,7 @@
     </div>`).join("");
     $("#suggest").querySelectorAll("[data-apply]").forEach(b => b.onclick = () => {
       const l = L[+b.dataset.apply];
-      if (window.__applyLineup) window.__applyLineup(l.roles, Object.fromEntries(s.map(m => [m, (l.heroes[m][0] || {}).hero || ""])));
+      window.SquadHandoff.submit({ roles: l.roles, heroes: l.chosenHeroes, score: l.score, createdAt: Date.now() });
       if (matchMedia("(max-width: 760px)").matches) window.__showTab("match");
       else document.getElementById("match-h").scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -289,7 +338,7 @@
     if (sc.personal.games) ev.push(`${wl(sc.personal)} for ${esc(label(m))} overall`);
     else ev.push(`${esc(label(m))} hasn't played this here yet`);
     if (b.meta && b.meta.wr != null) ev.push(`meta ${b.meta.wr.toFixed(1)}% over ${num(b.meta.games, 0)} games`);
-    const lines = [`<div class="headline"><b>${esc(heroName(p.hero))}</b> · ${esc(roleName(p.role))} — <b>${pct(sc.score)}</b> est. win chance</div>`, ev.join(" · ")];
+    const lines = [`<div class="headline"><b>${esc(heroName(p.hero))}</b> · ${esc(roleName(p.role))} — <b>${Math.round(sc.score * 100)}/100</b> recommendation score</div>`, ev.join(" · ")];
     if (p.opp) {
       if (sc.matchup) lines.push(`Vs <b>${esc(heroName(p.opp))}</b>: meta ${(sc.matchup.wr * 100).toFixed(1)}% over ${num(sc.matchup.games, 0)} games.`);
       else if (meta && meta.matchupsAvailable === false) lines.push(`pred.gg doesn't share lane-matchup stats with outside apps, so this uses your own games vs ${esc(heroName(p.opp))}.`);
@@ -319,6 +368,7 @@
   function showTab(name, scroll = true) {
     if (!document.getElementById("tab-" + name)) name = "record";
     document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("active", s.dataset.tab === name));
+    document.dispatchEvent(new CustomEvent("squad:tab", {detail:name}));
     tabs.forEach(t => { const on = t.dataset.go === name; t.classList.toggle("on", on); on ? t.setAttribute("aria-current", "page") : t.removeAttribute("aria-current"); });
     try { localStorage.setItem("squad-tab", name); } catch {}
     if (scroll && matchMedia("(max-width: 760px)").matches) window.scrollTo({ top: 0, behavior: "auto" });
@@ -330,6 +380,8 @@
   render();
 
   // hand shared pieces to the live-match module
-  window.__app = { ctx, heroes, squad, meta, T, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
-  const ms = document.createElement("script"); ms.src = "match.js"; document.body.appendChild(ms);
+  window.__app = { ctx, heroes, squad, meta, T, allMatches, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
+  const ms = document.createElement("script"); ms.src = "match.js";
+  ms.onerror = () => { const e = document.createElement("p"); e.className = "warn"; e.textContent = "Match tools could not load. Your selected plan is saved; reopen the app to retry."; $("#tab-match").prepend(e); };
+  document.body.appendChild(ms);
 })();

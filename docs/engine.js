@@ -164,19 +164,21 @@
     const prior = metaPrior(meta, hero, role);
     const mine = allRows.filter(r => r.member === member && r.role === role && r.hero === hero);
     const personal = record(mine);
-    const { inS, other } = splitSquad(mine, selected);
-    const o = record(other), sq = record(inS);
+    const vsRows = opp ? mine.filter(r => r.laneOpponents.some(o => o.hero === opp)) : [];
+    const baseline = opp ? mine.filter(r => !r.laneOpponents.some(o => o.hero === opp)) : mine;
+    const { inS, other } = splitSquad(baseline, selected);
+    const o = record(other), sq = record(splitSquad(mine, selected).inS);
     const otherP = shrink(o.wins, o.games, prior, K_PERSONAL);
-    let score = shrink(sq.wins, sq.games, otherP, K_SQUAD);
+    const baseSq = record(inS);
+    let score = shrink(baseSq.wins, baseSq.games, otherP, K_SQUAD);
     let matchup = null, vsOpp = null;
     if (opp) {
       matchup = matchupPrior(meta, hero, role, opp);
-      const mineVs = allRows.filter(r => r.member === member && r.hero === hero && r.laneOpponents.some(o => o.hero === opp));
-      vsOpp = record(mineVs);
-      // matchup shifts the score by how far it sits from the hero's own baseline
-      if (matchup) score += (matchup.shrunk - prior);
+      vsOpp = record(vsRows);
+      if (matchup) score += matchup.shrunk - prior;
       if (vsOpp.games) score = shrink(vsOpp.wins, vsOpp.games, score, K_SQUAD);
     }
+    score = Math.max(0, Math.min(1, score));
     return { hero, score, prior, meta: metaFor(meta, hero, role), personal, inSquad: sq, matchup, vsOpp };
   }
 
@@ -203,11 +205,13 @@
   }
 
   /** Rank role assignments for the selected squad members. */
-  function suggestLineups(ctx, selected, limit = 3) {
+  function suggestLineups(ctx, selected, limit = 3, draft = {}) {
     const sel = keyOf(selected);
     const combo = comboReport(ctx.matches, sel);
+    if (!sel.length || sel.length > ROLES.length) return [];
     const results = [];
     for (const a of assignments(sel, ROLES)) {
+      if (sel.some(m => draft.locks?.[m]?.role && draft.locks[m].role !== a[m])) continue;
       const parts = sel.map(m => ({ member: m, role: a[m], ...memberRoleScore(ctx.rows, m, a[m], sel) }));
       // Each member-role score already includes this squad's games, so the exact-lineup
       // record is shown as evidence and used to break ties, not counted again.
@@ -218,12 +222,29 @@
       const evidence = parts.reduce((s, p) => s + p.inSquad.games + p.overall.games, 0) + (L ? L.games * 2 : 0);
       results.push({ roles: a, score, base, lineupRecord: L ? { games: L.games, wins: L.wins } : null, parts, evidence });
     }
-    // prefer evidence-backed lineups: break near-ties (within 1 point) by evidence
-    results.sort((x, y) => (Math.abs(y.score - x.score) > 0.01 ? y.score - x.score : y.evidence - x.evidence));
-    return results.slice(0, limit).map(r => ({
-      ...r,
-      heroes: Object.fromEntries(sel.map(m => [m, suggestHeroes(ctx, m, r.roles[m], sel, null, 3)])),
-    }));
+    results.sort((x, y) => y.score - x.score || y.evidence - x.evidence);
+    const valid = [];
+    for (const r of results) {
+      const options = Object.fromEntries(sel.map(m => [m, suggestHeroes(ctx, m, r.roles[m], sel, null, 100)
+        .filter(h => !(draft.excluded || []).includes(h.hero) && (!draft.familiar || h.personal.games > 0) && (!draft.locks?.[m]?.hero || h.hero === draft.locks[m].hero))]));
+      // Backtrack so each selected player gets a distinct legal hero.
+      const chosen = {}, used = new Set();
+      function choose(i) {
+        if (i === sel.length) return true;
+        const m = sel[i];
+        for (const h of options[m]) {
+          if (used.has(h.hero)) continue;
+          used.add(h.hero); chosen[m] = h.hero;
+          if (choose(i+1)) return true;
+          used.delete(h.hero); delete chosen[m];
+        }
+        return false;
+      }
+      if (!choose(0)) continue;
+      valid.push({ ...r, chosenHeroes: chosen, heroes: Object.fromEntries(sel.map(m => [m, [options[m].find(h => h.hero === chosen[m]), ...options[m].filter(h => h.hero !== chosen[m])].slice(0,3)])) });
+      if (valid.length >= limit) break;
+    }
+    return valid;
   }
 
   // ---------------- character brief ----------------
@@ -255,11 +276,7 @@
     { t: 20, label: "Jungle camps spawn" },
     { t: 30, label: "River buff spawns" },
     { t: 210, label: "First Fangtooth" },
-    { t: 510, label: "Fangtooth respawn" },
-    { t: 810, label: "Fangtooth respawn" },
-    { t: 1110, label: "Fangtooth respawn" },
     { t: 1200, label: "Orb Prime" },
-    { t: 1410, label: "Fangtooth respawn" },
   ];
 
   function verdict(p) { return p >= 0.53 ? "Favored" : p <= 0.47 ? "Tough" : "Even"; }
@@ -314,7 +331,7 @@
     if (weakest && weakest.verdict === "Tough") calls.push(`${ROLE_LABEL[weakest.role]} is our weakest lane — jungler, gank or cover it before 6:00; laner, farm safe under tower.`);
     if (strongest && strongest.verdict === "Favored") calls.push(`${ROLE_LABEL[strongest.role]} is our strongest lane — gank there to snowball, then push its tower after every kill.`);
     if (threats[0]) calls.push(`Biggest threat: ${nm(threats[0].hero)} (${ROLE_LABEL[threats[0].role]})${threats[0].fed ? " — marked ahead" : ""}. Track them on the minimap; if missing, assume they're coming.`);
-    calls.push("After every won fight or objective, push the nearest tower — that's what won your close games.");
+    calls.push("After a won fight, consider a safe objective or tower rather than chasing kills.");
 
     const now = clock == null ? null : clock;
     const next = now == null ? null : TIMELINE.find(x => x.t > now) || null;
