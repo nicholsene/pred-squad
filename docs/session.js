@@ -3,7 +3,7 @@
   "use strict";
   const ROLES = ["OFFLANE", "JUNGLE", "MIDLANE", "SUPPORT", "CARRY"];
   const clone = x => JSON.parse(JSON.stringify(x));
-  const blank = () => ({ schema: 2, id: null, stage: "draft", setup: { ours: {}, theirs: {} }, live: {}, clock: {}, board: null, objectives: {}, events: [] });
+  const blank = () => ({ schema: 2, id: typeof crypto!=="undefined" && crypto.randomUUID ? crypto.randomUUID() : "match-"+Date.now()+"-"+Math.random().toString(36).slice(2), stage: "draft", setup: { ours: {}, theirs: {} }, live: {}, clock: {}, board: null, objectives: {}, events: [] });
   function normalize(s) {
     const v = Object.assign(blank(), s && typeof s === "object" ? s : {});
     v.setup = { ours: v.setup?.ours || {}, theirs: v.setup?.theirs || {} };
@@ -62,13 +62,24 @@
     if (kind === "countdown" && (!Number.isFinite(delay) || delay < 0 || delay > 1200)) throw new Error("Check the objective countdown (0–20 minutes).");
     return { kind, at, respawnAt: kind !== "available" && Number.isFinite(delay) ? at + delay : null, source, who, confirmed: true };
   }
-  function validateBoard(board) {
+  function validateBoard(board, context = {}) {
     const limits = { lvl: [1,18], k: [0,60], d: [0,60], a: [0,100], gold: [0,99999] };
     for (const side of ["ours", "theirs"]) {
       if (board?.[side]?.length !== 5) throw new Error("Both teams need five scoreboard rows.");
       for (const row of board[side]) for (const [key, [lo, hi]] of Object.entries(limits)) {
         if (row[key] != null && (!Number.isInteger(row[key]) || row[key] < lo || row[key] > hi)) throw new Error(`Check ${key}: ${row[key]}`);
       }
+    }
+    if(context.sessionId!==undefined&&board.sessionId!==context.sessionId)throw new Error("Snapshot belongs to a different match.");
+    if(board.at!=null&&(!Number.isFinite(board.at)||board.at>Date.now()+15000))throw new Error("Check the screenshot observation time.");
+    const itemIds=context.items?new Set(context.items.map(i=>i.name)):null;
+    const heroIds=context.heroes?new Set(context.heroes.map(h=>h.slug)):null;
+    for(const side of ["ours","theirs"])for(const row of board[side]){
+      if(heroIds&&row.hero&&!heroIds.has(row.hero))throw new Error("Choose a catalog hero.");
+      if(row.items!=null&&(!Array.isArray(row.items)||row.items.length>6))throw new Error("Inventory must contain at most six item slots.");
+      if(itemIds&&(row.items||[]).some(id=>id!=null&&!itemIds.has(id)))throw new Error("Choose valid catalog items.");
+      for(const key of ["inventoryConfirmed","inventoryComplete"])if(row[key]!=null&&typeof row[key]!=="boolean")throw new Error("Confirm inventory status.");
+      if(row.currentGold!=null&&(!Number.isInteger(row.currentGold)||row.currentGold<0||row.currentGold>99999))throw new Error("Check current spendable gold.");
     }
     return board;
   }

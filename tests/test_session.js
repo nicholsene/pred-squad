@@ -27,3 +27,14 @@ assert.deepEqual(Scan.candidates([[{t:"36",c:90}]]).map(x=>x.seconds),[36]);
 assert.equal(Scan.candidates([[{t:"2m+",c:90}]])[0].seconds,null);
 assert.equal(Scan.candidates([[{t:"2m+",c:90}]])[0].minSeconds,120);
 console.log("ok: seconds-only minimap counters and approximate timer rejection");
+
+const validBoard={at:Date.now(),sessionId:"new",ours:Array.from({length:5},()=>({hero:null,items:[],inventoryConfirmed:false})),theirs:Array.from({length:5},()=>({hero:null,items:[],inventoryConfirmed:false}))};
+assert.throws(()=>M.validateBoard({...validBoard,sessionId:"old"},{sessionId:"new"}));
+assert.throws(()=>M.validateBoard({...validBoard,at:Date.now()+60000}));
+validBoard.ours[0].items=["made-up-item"];
+assert.throws(()=>M.validateBoard(validBoard,{items:[{name:"Sword"}]}));
+validBoard.ours[0].items=[];validBoard.ours[0].currentGold=-1;
+assert.throws(()=>M.validateBoard(validBoard));
+console.log("ok: snapshot session, future age, canonical items and spendable gold validation");
+
+assert.notEqual(M.blank().id,M.blank().id,"Clearing a match must invalidate old in-flight scans");

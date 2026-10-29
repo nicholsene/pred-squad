@@ -31,7 +31,7 @@
      for(let ch=0;ch<3;ch++)data.data[di+ch]=(1-fy)*((1-fx)*src[(y0*c.width+x0)*4+ch]+fx*src[(y0*c.width+x1)*4+ch])+fy*((1-fx)*src[(y1*c.width+x0)*4+ch]+fx*src[(y1*c.width+x1)*4+ch]);
      data.data[di+3]=255;
    }
-   og.putImageData(data,0,0);out._screenAligned=true;return out;
+   og.putImageData(data,0,0);out._screenAligned=true;out._capturedAt=source._capturedAt;return out;
  }
  root.PhotoPrep={mapping,rectify};if(typeof module!=="undefined")module.exports=root.PhotoPrep;
 })(typeof window!=="undefined"?window:globalThis);

@@ -45,7 +45,13 @@ jobs:
           PREDGG_CLIENT_ID: ${{ secrets.PREDGG_CLIENT_ID }}
           PREDGG_CLIENT_SECRET: ${{ secrets.PREDGG_CLIENT_SECRET }}
           PREDGG_REFRESH_TOKEN: ${{ secrets.PREDGG_REFRESH_TOKEN }}
-        run: python scripts/fetch.py ${{ steps.meta.outputs.flag }}
+        run: |
+          if python scripts/fetch.py ${{ steps.meta.outputs.flag }}; then
+            exit 0
+          fi
+          echo "::warning::Data refresh failed. Retrying once in five minutes."
+          sleep 300
+          python scripts/fetch.py ${{ steps.meta.outputs.flag }}
       - name: Commit successful datasets and refresh heartbeat
         if: ${{ !cancelled() && steps.fetch.outcome != 'skipped' }}
         run: |

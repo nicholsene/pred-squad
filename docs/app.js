@@ -12,14 +12,19 @@
     try { const r = await fetch(`data/${name}?v=${Date.now()}`); if (!r.ok) throw 0; return await r.json(); }
     catch { return fallback; }
   }
-  const [squad, heroesF, matchesF, meta, status, itemsF] = await Promise.all([
+  const [squad, heroesF, matchesF, meta, status, itemsF, itemTemplates, patchReview] = await Promise.all([
     load("squad.json", { players: [], targets: {} }),
     load("heroes.json", { heroes: [] }),
     load("matches.json", { matches: [] }),
     load("meta.json", null),
     load("status.json", null),
     load("items.json", { items: [] }),
+    load("item-templates.json", { templates: [] }),
+    load("patch-review.json", {status:"source-incomplete"}),
   ]);
+  if(patchReview.patches?.heroes!==heroesF.patch||patchReview.patches?.items!==itemsF.patch){
+    Object.assign(patchReview,{status:"source-incomplete",sourceProblems:[...(patchReview.sourceProblems||[]),"Patch review does not match the loaded hero and item catalogues."]});
+  }
   // A durable handoff exists before the asynchronously loaded Match module.
   let queuedPlan = null;
   try { queuedPlan = JSON.parse(localStorage.getItem("squad-pending-plan") || "null"); } catch {}
@@ -380,7 +385,7 @@
   render();
 
   // hand shared pieces to the live-match module
-  window.__app = { ctx, heroes, squad, meta, T, allMatches, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
+  window.__app = { ctx, heroes, squad, meta, T, allMatches, items:itemsF.items || [], itemTemplates, itemPatch:itemsF.patch, patchReview, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
   const ms = document.createElement("script"); ms.src = "match.js";
   ms.onerror = () => { const e = document.createElement("p"); e.className = "warn"; e.textContent = "Match tools could not load. Your selected plan is saved; reopen the app to retry."; $("#tab-match").prepend(e); };
   document.body.appendChild(ms);

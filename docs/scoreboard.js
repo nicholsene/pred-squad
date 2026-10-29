@@ -138,6 +138,19 @@
   }
   const median = a => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
 
+  function inventory(src,f,gx,gy,u,side,opts) {
+    const names=[],previews=[],candidates=[],allowed=(opts.items||[]).filter(i=>i.slot==="PASSIVE").map(i=>i.name);
+    for(let i=0;i<6;i++){
+      // Six equipment slots follow the larger crest slot below the level circle.
+      const cx=gx+(side==="L"?-3.14+i*.45:1.63+i*.45)*u,cy=gy-.20*u,size=.38*u;
+      const c=document.createElement("canvas");c.width=c.height=48;const g=c.getContext("2d");
+      g.drawImage(src,(cx-size/2)/(2*f),(cy-size/2)/(2*f),size/(2*f),size/(2*f),0,0,48,48);
+      const result=root.ItemVision?root.ItemVision.match(g.getImageData(0,0,48,48),opts.itemTemplates,{patch:opts.patch,allowedNames:allowed.length?allowed:undefined}):{name:null,reason:"no_templates",confidence:0,alternatives:[]};
+      names.push(result.name||null);previews.push(c.toDataURL("image/png"));candidates.push(result);
+    }
+    return{items:names,itemPreviews:previews,itemCandidates:candidates,inventoryConfirmed:false,inventoryComplete:false};
+  }
+
   /* ---------- main ---------- */
   async function scan(file, opts = {}) {
     const { heroes = [], known = {}, onProgress = () => {} } = opts;
@@ -163,6 +176,8 @@
     const K = root.ScanKit, T = await templates();
     onProgress("Reading the scoreboard…", 0.05);
     const src = await K.toCanvas(file), f = BASE_W / src.width;
+    const rawIconSource=document.createElement("canvas"),rawImage=await createImageBitmap(file);
+    rawIconSource.width=rawImage.width;rawIconSource.height=rawImage.height;rawIconSource.getContext("2d").drawImage(rawImage,0,0);rawImage.close();
     const W = 2 * BASE_W, H = 2 * src.height * f, issues = [];
     const aligned = !!file._screenAligned;
     const golds = aligned ? [] : (await anchors(src, f)).filter(g => g.y > H * 0.15);
@@ -259,6 +274,7 @@
           if (opts.debug) row._hero = txt;
           if (best) row.hero = best[1];
         }
+        Object.assign(row,inventory(rawIconSource,f,gx,gy,u,side,opts));
         result[side].push(row);
         onProgress("Reading numbers…", 0.6 + 0.4 * (result.L.length + result.R.length) / 10);
       }
