@@ -248,10 +248,99 @@
     return { hero: h, role, meta: m, skillOrder, abilities: h ? h.abilities : [], best, worst, score, swap, laneVs };
   }
 
+  // ---------------- full match plan (10 heroes) ----------------
+  // Objective timings: patch 1.17.2 notes (camps 0:20, river 0:30, first Fangtooth 3:30)
+  // and in-game loading tips (Fangtooth every 5:00, Orb Prime at 20:00).
+  const TIMELINE = [
+    { t: 20, label: "Jungle camps spawn" },
+    { t: 30, label: "River buff spawns" },
+    { t: 210, label: "First Fangtooth" },
+    { t: 510, label: "Fangtooth respawn" },
+    { t: 810, label: "Fangtooth respawn" },
+    { t: 1110, label: "Fangtooth respawn" },
+    { t: 1200, label: "Orb Prime" },
+    { t: 1410, label: "Fangtooth respawn" },
+  ];
+
+  function verdict(p) { return p >= 0.53 ? "Favored" : p <= 0.47 ? "Tough" : "Even"; }
+
+  /**
+   * setup = { ours: {ROLE: {hero, who}}, theirs: {ROLE: {hero, fed}} }
+   * live  = { member: {deaths, wards, obj} }, clock = seconds since match start (or null)
+   */
+  function matchPlan(ctx, setup, live, clock, targets) {
+    const T = Object.assign({ maxDeaths: 4, minWards: 4 }, targets || {});
+    const nm = slug => ((ctx.heroes || []).find(h => h.slug === slug) || {}).name || slug;
+    const ours = (setup && setup.ours) || {}, theirs = (setup && setup.theirs) || {};
+    const squadHere = ROLES.map(r => ours[r] && ours[r].who).filter(Boolean).sort();
+    const lanes = ROLES.map(role => {
+      const o = ours[role] || {}, e = theirs[role] || {};
+      const oppHeroes = (LANE_OPPONENT_ROLES[role] || []).map(r => (theirs[r] || {}).hero).filter(Boolean);
+      const opp = e.hero || null;
+      let est = null, ev = {};
+      if (o.hero) {
+        if (o.who) {
+          const s = heroScore(ctx.rows, ctx.meta, o.who, role, o.hero, squadHere.length ? squadHere : [o.who], opp);
+          est = s.score; ev = { personal: s.personal, inSquad: s.inSquad, vsOpp: s.vsOpp, matchup: s.matchup, meta: s.meta };
+        } else {
+          est = metaPrior(ctx.meta, o.hero, role);
+          const mu = opp ? matchupPrior(ctx.meta, o.hero, role, opp) : null;
+          if (mu) est += mu.shrunk - est;
+          ev = { matchup: mu, meta: metaFor(ctx.meta, o.hero, role) };
+        }
+        if (opp) ev.laneVs = record(ctx.rows.filter(r => r.role === role && r.laneOpponents.some(x => x.hero === opp)));
+      }
+      return { role, hero: o.hero || null, who: o.who || null, opp, oppHeroes, fed: !!e.fed, est, verdict: est == null ? null : verdict(est), ev };
+    });
+
+    // enemy threats: fed first, then strongest meta pick for its role, then squad's worst record against it
+    const threats = ROLES.filter(r => theirs[r] && theirs[r].hero).map(role => {
+      const hero = theirs[role].hero, m = metaFor(ctx.meta, hero, role);
+      const vs = record(ctx.rows.filter(r => r.laneOpponents.some(x => x.hero === hero) || false));
+      const score = (theirs[role].fed ? 1 : 0) + (m && m.wr ? (m.wr - 50) / 10 : 0) + (vs.games >= 3 ? (0.5 - vs.wr) : 0);
+      return { role, hero, fed: !!theirs[role].fed, metaWr: m ? m.wr : null, vs, score };
+    }).sort((a, b) => b.score - a.score);
+
+    const rated = lanes.filter(l => l.est != null && l.role !== "JUNGLE");
+    const weakest = rated.slice().sort((a, b) => a.est - b.est)[0] || null;
+    const strongest = rated.slice().sort((a, b) => b.est - a.est)[0] || null;
+    const jungle = lanes.find(l => l.role === "JUNGLE");
+
+    const calls = [];
+    if (jungle && jungle.est != null) {
+      if (jungle.verdict === "Tough") calls.push(`Jungle is the tough matchup${jungle.opp ? ` vs ${nm(jungle.opp)}` : ""}: ward both jungle entrances early and don't contest camps 1v1 — give up the camp and clear the other side.`);
+      else if (jungle.verdict === "Favored") calls.push(`Jungle is favored${jungle.opp ? ` vs ${nm(jungle.opp)}` : ""}: invade their side early with a laner and take river objectives.`);
+    }
+    if (weakest && weakest.verdict === "Tough") calls.push(`${ROLE_LABEL[weakest.role]} is our weakest lane — jungler, gank or cover it before 6:00; laner, farm safe under tower.`);
+    if (strongest && strongest.verdict === "Favored") calls.push(`${ROLE_LABEL[strongest.role]} is our strongest lane — gank there to snowball, then push its tower after every kill.`);
+    if (threats[0]) calls.push(`Biggest threat: ${nm(threats[0].hero)} (${ROLE_LABEL[threats[0].role]})${threats[0].fed ? " — marked fed" : ""}. Track them on the minimap; if missing, assume they're coming.`);
+    calls.push("After every won fight or objective, push the nearest tower — that's what won your close games.");
+
+    const now = clock == null ? null : clock;
+    const next = now == null ? null : TIMELINE.find(x => x.t > now) || null;
+
+    const members = {};
+    for (const l of lanes) if (l.who) {
+      const lv = (live && live[l.who]) || {};
+      const deaths = lv.deaths || 0, wards = lv.wards || 0;
+      const rules = [];
+      if (deaths >= T.maxDeaths) rules.push({ level: "bad", text: `At ${deaths} deaths — past the limit. Farm under tower, fight only next to the team.` });
+      else if (deaths >= T.maxDeaths - 1) rules.push({ level: "warn", text: `At ${deaths} deaths — behind-mode: no solo fights. Say "I'm at ${deaths}" on voice.` });
+      if (now != null) {
+        const want = Math.min(T.minWards + 2, Math.floor(now / 300));
+        if (wards < want) rules.push({ level: "warn", text: `Wards ${wards} — about ${want} by now. Place one on your next trip out of base.` });
+      }
+      if (now != null && now > 240 && !lv.obj) rules.push({ level: "info", text: "No objective damage yet — join the next Fangtooth when your wave is pushed." });
+      members[l.who] = { role: l.role, hero: l.hero, opp: l.opp, rules };
+    }
+
+    return { lanes, threats, calls, weakest, strongest, next, timeline: TIMELINE, members, squadHere };
+  }
+
   const api = {
-    ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES,
+    ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE,
     shrink, squadRows, togetherMatches, summarize, comboReport, record,
-    memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor,
+    memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor, matchPlan,
     context(matches, heroes, meta) { return { matches, heroes, meta, rows: squadRows(matches) }; },
   };
   root.SquadEngine = api;

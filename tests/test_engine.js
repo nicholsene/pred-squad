@@ -56,3 +56,18 @@ assert.strictEqual(E.suggestLineups(empty, ["DiMu"], 3).length, 3);
 assert.strictEqual(E.comboReport([], ["DiMu"]).games, 0);
 
 console.log(`ok: ${ctx.rows.length} rows, combo ${c.wins}-${c.losses}, top lineup`, L[0].roles, (L[0].score * 100).toFixed(1) + "%");
+
+// full match plan
+const setup = { ours: { OFFLANE: { hero: "greystone", who: "stealinNICKELS" }, JUNGLE: { hero: "aurora" }, MIDLANE: { hero: "renna", who: "DiMu" }, SUPPORT: { hero: "phase" }, CARRY: { hero: "sparrow", who: "inFamoUs" } },
+  theirs: { OFFLANE: { hero: "terra" }, JUNGLE: { hero: "khaimera", fed: true }, MIDLANE: { hero: "legion" }, SUPPORT: { hero: "steel" }, CARRY: { hero: "crunch" } } };
+const plan = E.matchPlan(ctx, setup, { stealinNICKELS: { deaths: 3, wards: 1 } }, 600, {});
+assert.strictEqual(plan.lanes.length, 5);
+assert.deepStrictEqual(plan.squadHere, ["DiMu", "inFamoUs", "stealinNICKELS"]);
+assert.strictEqual(plan.threats[0].hero, "khaimera", "fed enemy should top threats");
+assert(plan.members.stealinNICKELS.rules.some(r => /behind-mode/.test(r.text)));
+assert(plan.members.stealinNICKELS.rules.some(r => /Wards 1/.test(r.text)));
+assert.strictEqual(plan.next.label, "Fangtooth respawn");
+assert(plan.lanes.find(l => l.role === "OFFLANE").ev.matchup, "meta matchup used for greystone vs terra");
+const empty2 = E.matchPlan(E.context([], heroes, null), {}, {}, null, {});
+assert.strictEqual(empty2.lanes.length, 5);
+console.log("ok: match plan", plan.calls.length, "calls; threats", plan.threats.map(t => t.hero).join(","));

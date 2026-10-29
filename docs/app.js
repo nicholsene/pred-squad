@@ -46,7 +46,7 @@
   const saved = (() => { try { return JSON.parse(localStorage.getItem("squad-sel") || "null"); } catch { return null; } })();
   const state = {
     selected: new Set(saved && saved.length ? saved.filter(k => squad.players.some(p => p.key === k)) : squad.players.map(p => p.key)),
-    exact: true, scope: "group", plan: {},
+    exact: true, scope: "group",
   };
   if (!state.selected.size) squad.players.forEach(p => state.selected.add(p.key));
   const persist = () => { try { localStorage.setItem("squad-sel", JSON.stringify([...state.selected])); } catch {} };
@@ -62,7 +62,7 @@
       if (state.selected.has(p.key) && state.selected.size === 1) { b.animate([{ transform: "translateX(-3px)" }, { transform: "translateX(3px)" }, { transform: "none" }], { duration: 220 }); return; }
       state.selected.has(p.key) ? state.selected.delete(p.key) : state.selected.add(p.key);
       b.setAttribute("aria-pressed", state.selected.has(p.key));
-      state.plan = {}; persist(); render();
+      persist(); render();
     };
     picker.appendChild(b);
   }
@@ -166,14 +166,10 @@
     </div>`).join("");
     $("#suggest").querySelectorAll("[data-apply]").forEach(b => b.onclick = () => {
       const l = L[+b.dataset.apply];
-      state.plan = Object.fromEntries(s.map(m => [m, { role: l.roles[m], hero: (l.heroes[m][0] || {}).hero || "", opp: "" }]));
-      renderPlan();
-      if (matchMedia("(max-width: 760px)").matches) window.__showTab("plan");
-      else document.getElementById("plan-h").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (window.__applyLineup) window.__applyLineup(l.roles, Object.fromEntries(s.map(m => [m, (l.heroes[m][0] || {}).hero || ""])));
+      if (matchMedia("(max-width: 760px)").matches) window.__showTab("match");
+      else document.getElementById("match-h").scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    if (!Object.keys(state.plan).length && L[0]) {
-      state.plan = Object.fromEntries(s.map(m => [m, { role: L[0].roles[m], hero: (L[0].heroes[m][0] || {}).hero || "", opp: "" }]));
-    }
   }
 
   // ---------- 4: plan ----------
@@ -182,9 +178,10 @@
     return list.map(h => `<option value="${esc(h.slug)}" ${h.slug === current ? "selected" : ""}>${esc(h.name)}</option>`).join("");
   }
 
-  function renderBrief(m, p) {
-    if (!p.hero) return `<p class="muted" style="margin:0">Pick a hero to see the plan.</p>`;
-    const b = E.heroBrief(ctx, m, p.role, p.hero, sel(), p.opp || null);
+  function renderBrief(m, role, hero, opp, selected) {
+    const p = { role, hero, opp };
+    if (!p.hero) return "";
+    const b = E.heroBrief(ctx, m, p.role, p.hero, selected && selected.length ? selected : [m], p.opp || null);
     const sc = b.score;
     const ev = [];
     if (sc.inSquad.games) ev.push(`${wl(sc.inSquad)} with this group`);
@@ -214,24 +211,7 @@
       ${abil ? `<details><summary>Abilities</summary><table><tbody>${abil}</tbody></table></details>` : ""}`;
   }
 
-  function renderPlan() {
-    const s = sel();
-    $("#plan").innerHTML = s.map(m => {
-      const p = state.plan[m] || (state.plan[m] = { role: E.ROLES[0], hero: "", opp: "" });
-      return `<div class="planrow" data-m="${esc(m)}"><h3>${esc(label(m))}</h3>
-        <div class="controls">
-          <label class="f">Lane<select data-k="role">${E.ROLES.map(r => `<option value="${r}" ${r === p.role ? "selected" : ""}>${roleName(r)}</option>`).join("")}</select></label>
-          <label class="f">Hero<select data-k="hero"><option value="">Choose…</option>${heroOptions(p.role, p.hero)}</select></label>
-          <label class="f">Enemy laner<select data-k="opp"><option value="">Unknown</option>${heroOptions(null, p.opp)}</select></label>
-        </div>
-        <div class="brief">${renderBrief(m, p)}</div></div>`;
-    }).join("");
-    $("#plan").querySelectorAll("select").forEach(el => el.onchange = () => {
-      const m = el.closest("[data-m]").dataset.m; state.plan[m][el.dataset.k] = el.value; renderPlan();
-    });
-  }
-
-  function render() { renderRecord(); renderStats(); renderSuggest(); renderPlan(); }
+  function render() { renderRecord(); renderStats(); renderSuggest(); }
 
   // ---------- phone tabs ----------
   const tabs = [...document.querySelectorAll(".tabbar button")];
@@ -247,4 +227,8 @@
   showTab((() => { try { return localStorage.getItem("squad-tab"); } catch { return null; } })() || "record", false);
 
   render();
+
+  // hand shared pieces to the live-match module
+  window.__app = { ctx, heroes, squad, meta, T, esc, pct, wl, heroName, label, renderBrief };
+  const ms = document.createElement("script"); ms.src = "match.js"; document.body.appendChild(ms);
 })();

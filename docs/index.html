@@ -57,12 +57,31 @@
     <div id="suggest"></div>
   </section>
 
-  <section class="card glass" id="tab-plan" data-tab="plan" aria-labelledby="plan-h">
+  <section class="card glass" id="tab-match" data-tab="match" aria-labelledby="match-h">
     <div class="card-head">
-      <h2 id="plan-h"><span class="step">4</span>Game plan</h2>
+      <h2 id="match-h"><span class="step">4</span>Live match</h2>
+      <select id="me" class="me" aria-label="Who are you"></select>
     </div>
-    <p class="note">Set each lane and hero. Add the enemy laner for matchup advice.</p>
-    <div id="plan"></div>
+    <div id="room" class="tile room"></div>
+
+    <div class="match-tools">
+      <label class="chip cta scan-btn"><input type="file" id="scan-file" accept="image/*" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Scan loading screen</label>
+      <label class="toggle"><input type="checkbox" id="wake"><span class="track"><span class="knob"></span></span><span>Keep screen on</span></label>
+      <button class="chip ghost" type="button" id="match-clear">Clear</button>
+    </div>
+    <p id="wake-note" class="note" style="margin:6px 0 0"></p>
+    <div id="scan-progress" class="scan-progress" hidden><div class="bar-meter"><i></i></div><span class="muted"></span></div>
+
+    <div class="sub-h">Lineup</div>
+    <div id="setup"></div>
+
+    <div class="sub-h">Live</div>
+    <div id="clock" class="tile clock"></div>
+    <div id="tracker"></div>
+
+    <div class="sub-h">Strategy</div>
+    <div id="strategy"></div>
   </section>
 
   <footer class="foot">Data from <a href="https://pred.gg" rel="noopener">pred.gg</a> · private squad tool</footer>
@@ -72,10 +91,11 @@
   <button data-go="record" class="on" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Record</span></button>
   <button data-go="stats"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>Stats</span></button>
   <button data-go="picks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg><span>Picks</span></button>
-  <button data-go="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M9 4a2 2 0 0 0-2 2H5v15h14V6h-2a2 2 0 0 0-2-2M9 12h6M9 16h4"/></svg><span>Plan</span></button>
+  <button data-go="match"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13h6l-1 8 8-10h-6z"/></svg><span>Match</span></button>
 </nav>
 
 <script src="engine.js"></script>
+<script src="scan.js"></script>
 <script src="app.js"></script>
 <script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
 </body>

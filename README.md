@@ -23,6 +23,13 @@ Win chances blend three layers, each pulled toward the next when its sample is s
 
 An enemy laner shifts the estimate by that matchup's meta win rate and by your own record against that hero. These are estimates, not predictions. With a few dozen games together they stay close to 50%. That's by design.
 
+## Live match (Match tab)
+
+- **Scan loading screen**: take a photo of the loading screen. It is read on the phone (Tesseract OCR, nothing uploaded) and fills in all ten heroes and lanes. Tap who's who if a gamertag wasn't read.
+- **Keep screen on**: uses the Screen Wake Lock API so the phone doesn't dim or lock while the page is open (iOS 16.4+, Android Chrome). It turns on automatically when you join a room.
+- **Live room**: *Start live match* gives a 5-letter code and a share link. Everyone who opens it sees the same lineup, clock and tracker; any player can change heroes, mark an enemy as fed, or log their deaths, wards and objective damage, and the strategy updates for everyone. Rooms are stored in a free Supabase project (`rooms` table, `patch_room` RPC, realtime) and expire after a day.
+- **Strategy**: per-lane favored/even/tough estimates, the biggest threats (fed first), jungle and push calls, objective timers, and each player's rules (behind-mode at 3 deaths, ward pace, objective reminder).
+
 ## Setup
 
 ### 1. pred.gg API access (one time)
