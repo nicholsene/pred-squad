@@ -24,7 +24,8 @@
   let previousScan = null, scanBusy = false, pendingPlanOpen = false;
   let room = null;          // { code, client, channel }
   let me = store.get("squad-me", "");
-  let tick = null;
+  let tick = null, lastLifecycleStage = null;
+  const planningUI=window.SquadPlanning.create({app:A,getState:()=>S,getMe:()=>me,commit,toast,exclusiveScan});
 
   // ---------- persistence: local or shared ----------
   const applyChanges = (state, changes) => {
@@ -285,7 +286,7 @@
 
   function renderSetup() {
     const o = S.setup.ours || {}, t = S.setup.theirs || {};
-    $("#setup").innerHTML = `<div class="setup-grid">
+    const setupHTML = `<div class="setup-grid">
       <div class="sg-row sg-head"><div class="sg-h"></div><div class="sg-h">Your team</div><div class="sg-h">Enemy</div></div>
       ${ROLES.map(r => `<div class="sg-row"><div class="sg-role">${esc(roleName(r))}</div>
         <div class="sg-cell">${heroSelect(["setup", "ours", r, "hero"], (o[r] || {}).hero, r)}${whoSelect(["setup", "ours", r, "who"], (o[r] || {}).who)}</div>
@@ -293,13 +294,13 @@
           <label class="fed"><input type="checkbox" data-path='${JSON.stringify(["setup", "theirs", r, "fed"])}' ${(t[r] || {}).fed ? "checked" : ""}> Ahead</label></div></div>`).join("")}
     </div>
     <p class="note" style="margin:8px 0 0">Tick <b>Ahead</b> when an enemy is snowballing (several kills, items ahead of everyone). They jump to the top of the threat list and their lane is flagged, so the squad plays around them.</p>`;
-    $("#setup").querySelectorAll("[data-path]").forEach(el => el.onchange = () => {
+    for(const container of [$("#setup"),$("#plan-setup")].filter(Boolean)){container.innerHTML=setupHTML;container.querySelectorAll("[data-path]").forEach(el => el.onchange = () => {
       const path = JSON.parse(el.dataset.path), value = el.type === "checkbox" ? el.checked : el.value;
       const setup=M.clone(S.setup); applyChanges({setup},[{path,value}]);
       const issues=M.validateSetup(setup).filter(x=>!x.startsWith("Choose a hero"));
       if(issues.length){toast(issues.join(" "));renderSetup();return;}
       commit([{path,value}, ...(S.stage === "ready" ? [{path:["stage"],value:"draft"}] : [])]);
-    });
+    });}
   }
 
   function renderLive() {
@@ -363,7 +364,7 @@
       ${order.length ? `<div class="sub-h">Your squad</div>` : ""}${order.map(m => mine[Object.keys(plan.members).indexOf(m)]).join("")}`;
   }
 
-  function render() { renderLifecycle(); renderSetup(); renderLive(); renderBoard(); renderStrategy(); renderObjectives(); renderPostmatch(); }
+  function render() { planningUI.render(); renderLifecycle(); renderSetup(); renderLive(); renderBoard(); renderStrategy(); renderObjectives(); renderPostmatch(); }
   window.__matchRender = () => { renderStrategy(); renderPostmatch(); };
 
   // ---------- toast ----------
@@ -414,11 +415,12 @@
   }
   function renderLifecycle() {
     const issues=M.validateSetup(S.setup), el=$("#lifecycle");
-    el.innerHTML=`${previousScan?'<button type="button" class="chip ghost" id="undo-scan">Undo last scan</button>':""}<b>${S.stage==="live"?"Match in progress":S.stage==="finished"?"Match finished":S.stage==="ready"?"Ready to play":"Pre-match plan"}</b>
+    if(lastLifecycleStage!==S.stage){const details=$("#match-lineup-details");if(details)details.open=S.stage!=="live";lastLifecycleStage=S.stage;}
+    el.innerHTML=`<b>${S.stage==="live"?"Match in progress":S.stage==="finished"?"Match finished":S.stage==="ready"?"Ready to play":"Pre-match plan"}</b>
       <p class="note">${S.stage==="live"?"Update your observations below as the match changes.":"Edit lanes, heroes and enemy picks before starting. Sharing a plan does not start the clock."}</p>
       ${issues.length?`<p class="warn">${issues.map(esc).join(" ")}</p>`:""}
-      ${S.stage==="draft"?'<button type="button" class="chip" id="plan-ready">Mark ready</button>':""}
-      ${S.stage==="live"?'<button type="button" class="chip" id="match-finish">Finish match</button>':""}`;
+      <div class="lifecycle-actions">${S.stage==="draft"?'<button type="button" class="chip" id="plan-ready">Mark ready</button>':""}
+      ${S.stage==="live"?'<button type="button" class="chip" id="match-finish">Finish match</button>':""}${previousScan?'<button type="button" class="chip ghost" id="undo-scan">Undo last scan</button>':""}</div>`;
     const undo=$("#undo-scan");if(undo)undo.onclick=()=>{const old=previousScan;if(Object.entries(old.after).some(([k,value])=>JSON.stringify(S[k])!==JSON.stringify(value)))return toast("Match changed since this scan. Correct the current values instead of undoing newer edits.");previousScan=null;commit(Object.entries(old.before).map(([k,value])=>({path:[k],value})),true);};
     const ready=$("#plan-ready");if(ready)ready.onclick=()=>{if(issues.length)return toast(issues.join(" "));if(!Object.values(S.setup.ours).some(p=>p.who&&p.hero))return toast("Assign at least one player and hero.");setPath(["stage"],"ready");};
     const finish=$("#match-finish");if(finish)finish.onclick=()=>commit([{path:["stage"],value:"finished"},{path:["finishedAt"],value:Date.now()}]);
@@ -542,31 +544,33 @@
     };
   }
   function renderCounterBuild() {
-    const el=$("#counterbuild");if(!el)return;
+    const el=$('#counterbuild');if(!el)return;
     const board=S.board?.sessionId===S.id?S.board:null;
-    const plan=window.CounterBuild.plan({items:A.items,heroes:A.heroes,matches:A.ctx.matches,setup:S.setup,board,patchReview:A.patchReview});
-    const key=JSON.stringify([board,S.setup,me,A.patchReview,plan.status]);
+    const plan=window.CounterBuild.plan({items:A.items,heroes:A.heroes,matches:A.ctx.matches,setup:S.setup,board,patchReview:A.patchReview,buildPlans:S.buildPlans,pivotIntents:S.pivotIntents,patch:A.itemPatch,sessionId:S.id});
+    planningUI.renderTeam();
+    const key=JSON.stringify([board,S.setup,S.buildPlans,S.pivotIntents,me,A.patchReview,plan.status,A.ctx.matches.length]);
     const age=board?Math.max(0,Math.floor((Date.now()-board.at)/1000)):null;
-    const ageText=age==null?"Scan a full scoreboard, then confirm the builds to see responses across all five enemies.":`Snapshot ${Math.floor(age/60)}:${String(age%60).padStart(2,"0")} ago · ${plan.status==="stale"?"Rescan needed":"Reviewed observations"}`;
-    if(el._counterKey===key){const status=el.querySelector("#counter-age");if(status)status.textContent=ageText;return;}
+    const ageText=age==null?'Review a scoreboard and the current inventories to adapt your next purchase.':`Snapshot ${Math.floor(age/60)}:${String(age%60).padStart(2,'0')} ago · ${plan.status==='stale'?'Rescan needed':'Reviewed observations'}`;
+    if(el._counterKey===key){const status=el.querySelector('#counter-age');if(status&&status.textContent!==ageText)status.textContent=ageText;return;}
     el._counterKey=key;
-    const opened=new Set([...el.querySelectorAll("details[open][data-section]")].map(d=>d.dataset.section));
-    const threats=plan.threats.slice(0,5).map(t=>`<li><b>${esc(heroName(t.hero))}</b> · ${esc(roleName(t.role))}<br>${(t.reasons||[]).map(esc).join(" · ")}<br><span class="note">${t.items?.length?t.items.map(n=>esc((A.items.find(i=>i.name===n)||{}).label||n)).join(", "):"Build not confirmed"}</span></li>`).join("");
-    const players=plan.players.slice().sort((a,b)=>(b.who===me)-(a.who===me)).map(p=>`${p.who===me?"":`<details data-section="player-${esc(p.who)}"><summary>${esc(label(p.who))} · squad build response</summary>`}<article class="counter-player ${p.who===me?"mine":""}"><h3>${esc(label(p.who))} · ${esc(heroName(p.hero))}</h3>
-      <ol class="counter-purchases">${(p.recommendations||[]).map(rec=>`<li><strong>${esc(rec.item.label)}</strong> · ${num(rec.fullCost,0)}g full cost<br><b>${rec.action==="consider-swap"?"Optional later swap — review before selling":rec.action==="verify-inventory"?"Check remaining inventory before buying":rec.affordable===true?"Affordable with confirmed current gold":rec.action==="save"?(rec.affordable===false?"Save toward this response":"Plan this response — check shop cost and budget"):"Next purchase to consider"}</b>
-      <p>${esc(rec.reasons?.[0]||"")}</p>${rec.reasons?.length>1?`<details data-section="reason-${esc(p.who)}-${esc(rec.item.name)}"><summary>How this helps · evidence and cost</summary><p>${rec.reasons.slice(1).map(esc).join(" ")}</p></details>`:""}<p class="note">Answers ${rec.targets.map(heroName).map(esc).join(", ")} · ${rec.confidence==="observed"?"Confirmed item evidence":"Limited evidence"}</p></li>`).join("")}</ol>
-      ${(p.levelDisadvantages||[]).length?`<p class="warn">${p.levelDisadvantages.map(g=>`${esc(heroName(g.hero))} (${esc(roleName(g.role))}) is ${Math.abs(g.gap)} levels ahead`).join(" · ")}</p>`:""}
-      ${(p.guidance||[]).map(g=>`<p>${esc(g)}</p>`).join("")}
-      ${p.ownedAnswers?.length?`<p class="note">Already covered: ${p.ownedAnswers.map(esc).join(", ")}</p>`:""}</article>${p.who===me?"":"</details>"}`).join("");
-    const pr=A.patchReview,changedItems=pr?.changes?.items||[],changedHeroes=pr?.changes?.heroes||[];
-    const patchInfo=pr?`<details class="patch-review" data-section="patch"><summary>Patch data: ${esc(({reviewed:"Reviewed","initial-baseline":"Initial baseline — review pending","review-required":"Review needed","source-incomplete":"Refresh incomplete"})[pr.status]||pr.status)}</summary><p>${changedItems.length} changed items · ${changedHeroes.length} changed heroes / skill orders</p>${(pr.sourceProblems||[]).map(x=>`<p class="warn">${esc(x)}</p>`).join("")}<ul>${[...changedItems.slice(0,8),...changedHeroes.slice(0,8)].map(x=>`<li>${esc(x.id)}: ${x.fields.map(esc).join(", ")}</li>`).join("")}</ul>${/^https:\/\/(www\.)?predecessorgame\.com\//.test(pr.officialNotesUrl||"")?`<a href="${esc(pr.officialNotesUrl)}" target="_blank" rel="noopener">Official patch notes for review</a>`:""}<p class="note">Patch notes require a rule review; the app does not automatically interpret new mechanics.</p></details>`:"";
-    el.innerHTML=`<h3>Adapt your build · whole lobby</h3><p id="counter-age" class="note" role="status">${esc(ageText)}</p>
-      <button class="chip cta" id="counterbuild-scan">Scan scoreboard / builds</button>
-      <div class="counter-player-grid">${players}</div>
-      ${threats?`<details data-section="threats"><summary>Why these responses · lobby threats</summary><ol class="lobby-threats">${threats}</ol></details>`:""}
-      ${patchInfo}${plan.warnings.length?`<details data-section="coverage" ${plan.status==="patch-review-required"||plan.status==="stale"?"open":""}><summary>Advice coverage · ${plan.status==="patch-review-required"?"patch review needed":plan.status==="stale"?"rescan needed":"check evidence"}</summary>${plan.warnings.map(w=>`<p class="note">${esc(w)}</p>`).join("")}</details>`:""}`;
-    el.querySelectorAll("details[data-section]").forEach(d=>{if(opened.has(d.dataset.section))d.open=true;});
-    $("#counterbuild-scan").onclick=()=>$("#board-file").click();
+    const opened=new Set([...el.querySelectorAll('details[open][data-section]')].map(d=>d.dataset.section)),choices=new Map();
+    const rolePurpose={CARRY:'protect your damage uptime while you fight from range',SUPPORT:'stay alive while protecting your teammates',JUNGLE:'stay healthy enough to contest objectives',OFFLANE:'stay in the frontline when you rotate',MIDLANE:'keep casting instead of being forced out of the fight'};
+    const answerText={magical:'Add magical armor to reduce the spell pressure you take',physical:'Add physical armor against their physical damage',healing:'Coordinate anti-heal to answer their sustain',shielding:'Coordinate anti-shield coverage',physicalArmor:'Add penetration or shred for your physical damage',magicalArmor:'Add penetration or shred for your magical damage',health:'Consider damage that answers high-health builds',crit:'Consider defense against critical damage',burst:'Consider a defensive response to their burst'};
+    const threatPattern={magical:'magical-power pressure',physical:'physical-power pressure',healing:'healing or lifesteal',shielding:'shielding',physicalArmor:'stacked physical armor',magicalArmor:'stacked magical armor',health:'high health',crit:'critical-strike damage',burst:'burst-oriented effects'};
+    function needView(p,need,index){const featured=plan.threats.find(t=>need.targets.includes(t.hero)),ownRow=board?.ours?.[ROLES.indexOf(p.role)],enemyRow=board?.theirs?.find(r=>r.hero===featured?.hero),gap=Number.isFinite(ownRow?.lvl)&&Number.isFinite(enemyRow?.lvl)?enemyRow.lvl-ownRow.lvl:null;
+      const lead=featured?`${heroName(featured.hero)}${gap>0?` is ${gap} level${gap===1?'':'s'} ahead of ${heroName(p.hero)}`:' has a relevant confirmed item build'}. `:'';
+      const intro=lead+`Their observed items suggest ${threatPattern[need.key]||'a relevant item pattern'}. That can affect rotations and objective fights across the lobby. ${answerText[need.key]||'Adapt to the observed build'} so you can ${rolePurpose[p.role]||'carry out your role'}.`;
+      const base=window.BuildPlans.getBaseline(planningUI.context(p.who)),reviewed=base.status==='ready'?base.plan:null;
+      const body=`<div class="need-context"><h4>${esc(featured?heroName(featured.hero)+' matters beyond your lane':'Adapt to the confirmed lobby')}</h4><p>${esc(intro)}</p><p class="note">Estimated pressure from reviewed items and levels, not measured incoming damage.</p>${reviewed?`<p class="baseline-summary">Your plan: <b>${esc(planningUI.itemName(reviewed.nextItem))}</b> next</p>`:''}<button class="text-button" type="button" data-review-build="${esc(p.who)}">${reviewed?'Review starting build':'Add your starting build'} →</button></div><div class="need-heading"><h4>${need.alternatives.length} ranked option${need.alternatives.length===1?'':'s'} · ${esc(need.answer)}</h4><p class="note">Choose one direction for your next item slot. Rankings use catalogue signals and fit; check passive details in the shop.</p></div><ol class="counter-purchases">${need.alternatives.map((rec,i)=>{const choiceKey=p.who+'-'+index+'-'+i;choices.set(choiceKey,{who:p.who,rec});const action=rec.action==='consider-swap'?'Full inventory · evaluate a later swap':rec.action==='verify-inventory'?'Verify unread slots before buying':rec.affordable===true?'Affordable with confirmed current gold':rec.affordable===false?'Save toward this item':'Check shop cost and current budget';return `<li><div class="counter-item-head"><span class="counter-rank">${i+1}</span>${planningUI.icon(rec.item,52)}<div><h4>${esc(rec.item.label)}</h4><span>${num(rec.fullCost)}g full cost</span></div></div><p class="option-benefit">${esc(rec.fitExplanation)}</p>${reviewed?`<p class="pivot-comparison">${esc(rec.baselineComparison.description)}</p>`:''}<details data-section="item-${esc(choiceKey)}"><summary>Components, tradeoff &amp; evidence</summary><p>${esc(rec.tradeoff)}</p>${rec.recipe.length?`<div class="recipe-list">${rec.recipe.map(it=>`<span>${planningUI.icon(A.items.find(i=>i.name===it.name),24)}${esc(it.label)}${it.owned?' · owned':''}</span>`).join('')}</div>`:''}<p>${rec.reasons.map(esc).join(' ')}</p><p class="note">${esc(action)}. Component upgrade costs are checked in the shop.</p></details><button class="pivot-choice ${rec.selectedIntent?'selected':''}" type="button" data-choose-pivot="${esc(choiceKey)}" aria-pressed="${!!rec.selectedIntent}">${rec.selectedIntent?'✓ Planned pivot · purchase unconfirmed':p.who===me?'I plan to pivot to this':'Plan this for '+esc(label(p.who))}</button><p class="note">Answers ${rec.targets.map(heroName).map(esc).join(', ')} · ${rec.confidence==='observed'?'Confirmed inventory evidence':'Incomplete inventory evidence'}</p></li>`;}).join('')}</ol>`;
+      return index===0?body:`<details class="additional-need" data-section="need-${esc(p.who)}-${esc(need.key)}"><summary>Also consider · ${esc(need.answer)}</summary>${body}</details>`;
+    }
+    const players=plan.players.slice().sort((a,b)=>(b.who===me)-(a.who===me)).map(p=>{const body=`<article class="counter-player ${p.who===me?'mine':''}"><div class="counter-player-title"><div><p class="eyebrow">${esc(label(p.who))}</p><h3>${esc(heroName(p.hero))} · ${esc(roleName(p.role))}</h3></div></div>${p.needs.map((n,i)=>needView(p,n,i)).join('')}${p.guidance.map(g=>`<p class="guidance">${esc(g)}</p>`).join('')}${p.ownedAnswers.length?`<details data-section="owned-${esc(p.who)}"><summary>Current team coverage</summary><p>${p.ownedAnswers.map(esc).join(' · ')}</p></details>`:''}</article>`;return p.who===me?body:`<details data-section="player-${esc(p.who)}"><summary>${esc(label(p.who))} · squad build response</summary>${body}</details>`;}).join('');
+    const pr=A.patchReview,patchLabel={reviewed:'Reviewed','initial-baseline':'Initial baseline · review pending','review-required':'Review needed','source-incomplete':'Refresh incomplete'},changed=[...(pr?.changes?.items||[]),...(pr?.changes?.heroes||[])];
+    el.innerHTML=`<div class="counter-toolbar"><div><p class="eyebrow">Whole lobby · personal response</p><p id="counter-age" class="note" role="status">${esc(ageText)}</p></div><button class="chip cta" id="counterbuild-scan" type="button">Scan scoreboard / builds</button></div><div class="counter-player-grid">${players||'<p class="empty-advice">Choose your heroes and player assignments in Plan, then confirm a scoreboard for item advice.</p>'}</div>${plan.threats.length?`<details data-section="threats"><summary>Why these responses · lobby threats</summary><ol class="lobby-threats">${plan.threats.map(t=>`<li><b>${esc(heroName(t.hero))}</b> · ${esc(roleName(t.role))}<p>${t.reasons.map(esc).join(' · ')||'Review the current item build.'}</p><div class="threat-items">${t.items.map(n=>`<span>${planningUI.icon(A.items.find(it=>it.name===n),28)}${esc(planningUI.itemName(n))}</span>`).join('')||'Inventory unconfirmed'}</div></li>`).join('')}</ol></details>`:''}<details class="patch-review" data-section="patch"><summary>Patch data · ${esc(patchLabel[pr?.status]||'Unavailable')}</summary><p>${changed.length} catalogue entries changed.</p>${/^https:\/\/(www\.)?predecessorgame\.com\//.test(pr?.officialNotesUrl||'')?`<a href="${esc(pr.officialNotesUrl)}" target="_blank" rel="noopener">Official patch notes</a>`:''}<p class="note">New mechanics require a rule review. The app does not automatically interpret patch-note prose.</p></details>${plan.warnings.length?`<details data-section="coverage" ${['stale','patch-review-required'].includes(plan.status)?'open':''}><summary>Advice coverage · ${plan.status==='patch-review-required'?'patch review needed':plan.status==='stale'?'rescan needed':'check evidence'}</summary>${plan.warnings.map(w=>`<p class="note">${esc(w)}</p>`).join('')}</details>`:''}`;
+    el.querySelectorAll('details[data-section]').forEach(d=>{if(opened.has(d.dataset.section))d.open=true;});
+    el.querySelector('#counterbuild-scan').onclick=()=>$('#board-file').click();
+    el.querySelectorAll('[data-review-build]').forEach(b=>b.onclick=()=>planningUI.open(b.dataset.reviewBuild));
+    el.querySelectorAll('[data-choose-pivot]').forEach(b=>b.onclick=()=>{const choice=choices.get(b.dataset.choosePivot);if(choice)planningUI.select(choice.who,choice.rec);});
   }
   async function openMap(file) {
     if(clockSec()==null)return toast("Start the match clock before scanning a countdown.");
@@ -604,6 +608,7 @@
     const meSel = $("#me");
     meSel.innerHTML = `<option value="">Who are you?</option>` + A.squad.players.map(p => `<option value="${esc(p.key)}" ${p.key === me ? "selected" : ""}>${esc(p.label)}</option>`).join("");
     meSel.onchange = () => { me = meSel.value; store.set("squad-me", me); if (room) room.channel.track({ who: me || "guest", at: Date.now() }); render(); };
+    $("#quick-scan").onclick=()=>{window.__showTab("match");$("#camera-open").click();};
     $("#camera-open").onclick = () => {
       if(scanBusy)return toast("Wait for the current scan to finish.");
       window.CameraScan.open("loading",(kind,canvas)=>{

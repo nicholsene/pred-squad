@@ -3,11 +3,13 @@
   "use strict";
   const ROLES = ["OFFLANE", "JUNGLE", "MIDLANE", "SUPPORT", "CARRY"];
   const clone = x => JSON.parse(JSON.stringify(x));
-  const blank = () => ({ schema: 2, id: typeof crypto!=="undefined" && crypto.randomUUID ? crypto.randomUUID() : "match-"+Date.now()+"-"+Math.random().toString(36).slice(2), stage: "draft", setup: { ours: {}, theirs: {} }, live: {}, clock: {}, board: null, objectives: {}, events: [] });
+  const blank = () => ({ schema: 2, id: typeof crypto!=="undefined" && crypto.randomUUID ? crypto.randomUUID() : "match-"+Date.now()+"-"+Math.random().toString(36).slice(2), stage: "draft", setup: { ours: {}, theirs: {} }, live: {}, clock: {}, board: null, objectives: {}, events: [], buildPlans: {}, pivotIntents: {} });
   function normalize(s) {
     const v = Object.assign(blank(), s && typeof s === "object" ? s : {});
     v.setup = { ours: v.setup?.ours || {}, theirs: v.setup?.theirs || {} };
     v.live ||= {}; v.clock ||= {}; v.objectives ||= {}; v.events ||= [];
+    v.buildPlans = v.buildPlans && typeof v.buildPlans === "object" && !Array.isArray(v.buildPlans) ? v.buildPlans : {};
+    v.pivotIntents = v.pivotIntents && typeof v.pivotIntents === "object" && !Array.isArray(v.pivotIntents) ? v.pivotIntents : {};
     if (!s?.stage && v.clock.startedAt) v.stage = "live";
     return v;
   }

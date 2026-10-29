@@ -1,5 +1,5 @@
 /* Confirmed-photo lobby counterbuild priorities; not win probabilities. */
-(function(root,factory){if(typeof module==="object"&&module.exports)module.exports=factory();else root.CounterBuild=factory();})(typeof self!=="undefined"?self:this,function(){
+(function(root,factory){if(typeof module==="object"&&module.exports)module.exports=factory(require("./buildplans.js"));else root.CounterBuild=factory(root.BuildPlans);})(typeof self!=="undefined"?self:this,function(BuildPlans){
  "use strict";
  const ROLES=["OFFLANE","JUNGLE","MIDLANE","SUPPORT","CARRY"],finite=x=>typeof x==="number"&&Number.isFinite(x);
  const stat=(it,k)=>finite(it?.stats?.[k])?it.stats[k]:0,type=(it,...keys)=>keys.includes(it?.type),clamp=(x,l,h)=>Math.max(l,Math.min(h,x));
@@ -47,12 +47,15 @@
  {key:"crit",label:"critical-strike items",test:p=>p.crit>=20,buy:it=>type(it,"ANTI_CRIT"),owned:p=>p.antiCrit>0,answer:"anti-crit defense",personal:true},
  {key:"burst",label:"burst-oriented items",test:p=>p.burst>0,buy:it=>type(it,"ANTI_BURST","SPELL_SHIELD"),owned:p=>p.antiBurst>0,answer:"anti-burst / spell shield",personal:true}];
  function fit(it,d,classes){const phys=stat(it,"PHYSICAL_POWER"),mag=stat(it,"MAGICAL_POWER");if(d==="physical"&&mag>0||d==="magical"&&phys>0)return null;if(d==="unknown"&&(phys>0||mag>0))return null;return (d==="physical"&&phys>0||d==="magical"&&mag>0?.6:0)+(classes.includes(it.class)?.35:0);}
- function plan({items=[],heroes=[],matches=[],setup={},board=null,now=Date.now(),snapshotMaxAgeMs=180000,patchReview=null}={}){
+ function plan({items=[],heroes=[],matches=[],setup={},board=null,now=Date.now(),snapshotMaxAgeMs=180000,patchReview=null,buildPlans={},pivotIntents={},patch=null,sessionId=null}={}){
   const C=Object.fromEntries(items.map(i=>[i.name,i])),H=Object.fromEntries(heroes.map(h=>[h.slug,h])),name=h=>H[h]?.name||h||"Unknown hero";
   const result={status:"needs-observation",threats:[],players:[],warnings:[]},fresh=!!board&&current(board.at,now,snapshotMaxAgeMs);
   if(!fresh){result.status=board?"stale":"needs-observation";result.warnings.push(board?"Snapshot is stale or has an invalid time. Confirm a new scoreboard and inventories.":"Confirm a scoreboard photo and inventories for current counterbuild advice.");}
   const us=ROLES.map((role,i)=>({...observation(fresh?board.ours?.[i]:null,setup.ours?.[role],board?.at,now,snapshotMaxAgeMs,C),role,who:setup.ours?.[role]?.who||null}));
   const them=ROLES.map((role,i)=>({...observation(fresh?board.theirs?.[i]:null,setup.theirs?.[role],board?.at,now,snapshotMaxAgeMs,C),role}));
+  const planContext={plans:buildPlans,pivots:pivotIntents,setup,patch,sessionId:sessionId||board?.sessionId,boardAt:board?.at,now,catalog:items,heroes,snapshotMaxAgeMs};
+  result.teamIntent=BuildPlans.team(planContext);
+  const baselineBy=new Map(us.map(o=>[o.role,BuildPlans.getBaseline({...planContext,who:o.who,hero:o.hero,role:o.role})]));
   const confirmedEnemies=them.filter(o=>o.confirmed).length;
   if(fresh&&confirmedEnemies&&us.some(o=>o.who&&o.confirmed))result.status="ready";
   if(fresh&&confirmedEnemies<5)result.warnings.push(`${5-confirmedEnemies} enemy inventories are unconfirmed; lobby coverage is incomplete.`);
@@ -70,15 +73,20 @@
   const covered=new Map(),damageBy=new Map();for(const o of us)damageBy.set(o.role,damage(o,H,matches,C));
   const blocked=(it,o)=>(it.blockedBy||[]).some(n=>o.names.includes(n))||(it.blocks||[]).some(n=>o.names.includes(n))||o.names.some(n=>(C[n]?.blocks||[]).includes(it.name));
   const capacity=o=>o.complete&&o.names.filter(n=>C[n]?.slot==="PASSIVE").length<6?2:!o.complete?1:0;
-  const options=(o,rule)=>{const d=damageBy.get(o.role).type;return items.filter(finalItem).filter(it=>!o.names.includes(it.name)&&!(o.row.excludedItems||[]).includes(it.name)).filter(it=>!blocked(it,o)&&rule.buy(it,d)).map(it=>({it,fit:fit(it,d,H[o.hero]?.classes||[])})).filter(x=>x.fit!=null).sort((a,b)=>b.fit-a.fit||a.it.cost-b.it.cost||a.it.name.localeCompare(b.it.name));};
+  const options=(o,rule)=>{const d=damageBy.get(o.role).type;return items.filter(finalItem).filter(it=>!o.names.includes(it.name)&&!(o.row.excludedItems||[]).includes(it.name)).filter(it=>!blocked(it,o)&&rule.buy(it,d)).map(it=>{const base=baselineBy.get(o.role),continuity=base?.status==="ready"?(base.plan.nextItem===it.name ? .02 : base.plan.items.includes(it.name) ? .01 : 0):0;return{it,fit:fit(it,d,H[o.hero]?.classes||[]),continuity};}).filter(x=>x.fit!=null).sort((a,b)=>b.fit-a.fit||b.continuity-a.continuity||a.it.cost-b.it.cost||a.it.name.localeCompare(b.it.name));};
   const utilityOwner=new Map();
   for(const rule of RULES.filter(r=>r.team)){
    const owners=us.filter(o=>o.confirmed&&rule.owned(o.profile));
    if(owners.length)covered.set(rule.key,owners.map(o=>o.who||`${name(o.hero)} (${o.role})`));
    else{const fits=us.filter(o=>o.who&&o.confirmed).map(o=>({o,best:options(o,rule)[0]})).filter(x=>x.best).sort((a,b)=>capacity(b.o)-capacity(a.o)||b.best.fit-a.best.fit||(a.o.role==="SUPPORT"?-1:b.o.role==="SUPPORT"?1:0));if(fits.length)utilityOwner.set(rule.key,fits[0].o.who);}
   }
+  for(const rule of RULES.filter(r=>r.team)){
+   if(covered.has(rule.key))continue;
+   const intent=result.teamIntent.reservations.find(r=>{if(r.answerKey!==rule.key)return false;const own=us.find(o=>o.who===r.who),it=C[r.item];return own?.confirmed&&it&&finalItem(it)&&!own.names.includes(it.name)&&!blocked(it,own)&&!(own.row.excludedItems||[]).includes(it.name)&&rule.buy(it,damageBy.get(own.role).type)&&fit(it,damageBy.get(own.role).type,H[own.hero]?.classes||[])!=null;});
+   if(intent)utilityOwner.set(rule.key,intent.who);
+  }
   for(const o of us.filter(o=>o.who)){
-   const d=damageBy.get(o.role),row=o.row,out={who:o.who,hero:o.hero,role:o.role,damageType:d.type,damageSource:d.source,status:!fresh?result.status:o.confirmed?"ready":"needs-inventory",levelDisadvantages:[],guidance:[],recommendations:[],ownedAnswers:[],observationAgeMs:o.confirmed?now-o.inventoryAt:null};result.players.push(out);
+   const d=damageBy.get(o.role),row=o.row,out={who:o.who,hero:o.hero,role:o.role,damageType:d.type,damageSource:d.source,status:!fresh?result.status:o.confirmed?"ready":"needs-inventory",levelDisadvantages:[],guidance:[],recommendations:[],needs:[],plannedAnswers:result.teamIntent.reservations,baselineStatus:baselineBy.get(o.role)?.status||"missing",ownedAnswers:[],observationAgeMs:o.confirmed?now-o.inventoryAt:null};result.players.push(out);
    if(!fresh){out.guidance.push("Reconfirm a recent scoreboard before relying on current build advice.");continue;}if(!o.identityOk){out.guidance.push("Photo hero differs from the selected hero. Confirm the lineup first.");continue;}
    if(!o.confirmed){out.guidance.push("Confirm your item slots, including unread slots, before checking purchases against your inventory.");continue;}
    if(o.unread)out.guidance.push(`${o.unread} unread item slots: check a suggested item is not already owned.`);
@@ -100,11 +108,29 @@
     candidates.push({item:it,priority,answer:rule.answer,answerKey:rule.key,targets:sources.map(t=>t.hero),reasons,action:full?"consider-swap":!o.complete?"verify-inventory":affordable===true?"buy":"save",affordable,currentGold,fullCost:it.cost,remainingCost:components?null:it.cost,confidence:o.unread||sources.some(t=>them.find(e=>e.role===t.role)?.unread)?"limited":"observed",teamAssigned:!!rule.team});
    }
    candidates.sort((a,b)=>b.priority-a.priority||a.fullCost-b.fullCost||a.item.name.localeCompare(b.item.name));const selected=new Set();for(const c of candidates){if(selected.has(c.item.name))continue;out.recommendations.push(c);selected.add(c.item.name);if(out.recommendations.length===3)break;}
+   const reviewedBaseline=baselineBy.get(o.role),baseline=reviewedBaseline?.status==='ready'?reviewedBaseline.plan:null;
+   const bestNeeds=[];for(const candidate of candidates)if(!bestNeeds.some(n=>n.answerKey===candidate.answerKey)){bestNeeds.push(candidate);if(bestNeeds.length===3)break;}
+   out.needs=bestNeeds.map(best=>{
+    const rule=RULES.find(r=>r.key===best.answerKey),choices=options(o,rule).slice(0,3),minPrice=Math.min(...choices.map(x=>x.it.cost)),threats=result.threats.filter(t=>best.targets.includes(t.hero));
+    const alternatives=choices.map((choice,index)=>{
+     const it=choice.it,hasComponents=o.names.some(n=>!finalItem(C[n])&&C[n]?.slot==='PASSIVE'),affordable=!o.complete||best.currentGold==null?null:best.currentGold>=it.cost?true:hasComponents?null:false;
+     const comparison=BuildPlans.compare({baseline,pivot:it.name,owned:o.names,catalog:items});
+     const stats=[['PHYSICAL_POWER','physical power'],['MAGICAL_POWER','magical power'],['PHYSICAL_ARMOR','physical armor'],['MAGICAL_ARMOR','magical armor'],['HEALTH','health'],['ABILITY_HASTE','ability haste'],['ATTACK_SPEED','attack speed'],['CRITICAL_CHANCE','critical chance'],['PHYSICAL_PENETRATION','physical penetration'],['MAGICAL_PENETRATION','magical penetration']].filter(([key])=>stat(it,key)>0).map(([key,label])=>`${stat(it,key)} ${label}`);
+     const tradeoffs=[];if(rule.personal&&stat(it,'PHYSICAL_POWER')===0&&stat(it,'MAGICAL_POWER')===0)tradeoffs.push('A defensive detour without added power; compare the damage or utility timing it delays.');if(it.cost>minPrice)tradeoffs.push(`Costs ${it.cost-minPrice}g more than the lowest-price eligible option for this need.`);if(full)tradeoffs.push('Requires an evaluated later swap; choosing this direction does not sell an owned item.');if(!tradeoffs.length)tradeoffs.push('Compare this stat mix and its shop passive with the other options.');
+     const recipe=(Array.isArray(it.buildsFrom)?it.buildsFrom:[]).filter(n=>C[n]).map(n=>({name:n,label:C[n].label||n,cost:C[n].cost,owned:o.names.includes(n)}));
+     const selected=result.teamIntent.reservations.some(r=>r.who===o.who&&r.item===it.name&&r.answerKey===rule.key),context={role:o.role,damageType:d.type,damageSource:d.source,crossLane:threats.some(t=>t.role!==o.role),enemyLeads:threats.map(t=>({hero:t.hero,role:t.role,levelGap:t.levelGap,goldGap:t.goldGap,reasons:t.reasons})),observationAgeMs:now-board.at};
+     const fitExplanation=`Fits the ${d.type} build assessment (${d.source}). `+(stats.length?`Catalogue stats: ${stats.join(', ')}.`:'Check its passive in the shop.');
+     const reasons=[...best.reasons,comparison.description];if(context.crossLane)reasons.push('This response is ranked against threats outside your lane.');
+     return{...best,item:it,rank:index+1,source:'confirmed-items',context,fitExplanation,tradeoff:tradeoffs.join(' '),recipe,baselineComparison:comparison,selectedIntent:selected,reasons,affordable,fullCost:it.cost,remainingCost:hasComponents?null:it.cost,action:full?'consider-swap':!o.complete?'verify-inventory':affordable===true?'buy':'save'};
+    });
+    return{key:rule.key,answer:rule.answer,priority:best.priority,targets:best.targets,alternatives,plannedBy:result.teamIntent.reservations.filter(r=>r.answerKey===rule.key)};
+   });
+   out.recommendations=out.needs.map(n=>n.alternatives[0]).filter(Boolean);
    if(!out.recommendations.length)out.guidance.push(confirmedEnemies?"No additional suitable counter is supported by the confirmed inventories, or the team already covers the observed utility need.":"Confirm enemy inventory slots to identify an actual counterbuild need.");
   }
   if(patchReview && !["reviewed","initial-baseline"].includes(patchReview.status)){
     result.status="patch-review-required";result.warnings.push("Patch data or counter rules changed. Review the patch delta before using item prescriptions.");
-    for(const p of result.players){p.recommendations=[];p.status="patch-review-required";}
+    for(const p of result.players){p.recommendations=[];p.needs=[];p.status="patch-review-required";}
   }else if(patchReview?.status==="initial-baseline")result.warnings.push("Initial catalogue baseline: rules have not yet been signed off against official patch notes.");
   return result;
  }
