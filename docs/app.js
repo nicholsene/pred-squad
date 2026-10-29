@@ -20,8 +20,12 @@
     load("status.json", null),
   ]);
   const heroes = heroesF.heroes || [];
-  const matches = matchesF.matches || [];
-  const ctx = E.context(matches, heroes, meta);
+  const allMatches = matchesF.matches || [];
+  // Ranked-only filter (per device). Everything downstream reads `matches` / `ctx`.
+  let rankedOnly = (() => { try { return localStorage.getItem("squad-ranked") === "1"; } catch { return false; } })();
+  let matches, ctx;
+  const applyMode = () => { matches = rankedOnly ? allMatches.filter(m => m.mode === "RANKED") : allMatches; ctx = E.context(matches, heroes, meta); };
+  applyMode();
   const T = Object.assign({ maxDeaths: 4, minWards: 4, minObjectiveDamage: 1 }, squad.targets || {});
   const heroName = slug => (heroes.find(h => h.slug === slug) || {}).name || slug || "?";
   const label = key => (squad.players.find(p => p.key === key) || {}).label || key;
@@ -34,10 +38,19 @@
     const mins = Math.round((Date.now() - new Date(matchesF.updatedAt)) / 60000);
     bits.push(mins < 60 ? `Updated ${Math.max(1, mins)} min ago` : `Updated ${new Date(matchesF.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`);
   }
-  bits.push(`${matches.length} matches`);
-  if (heroesF.patch) bits.push(`Patch ${heroesF.patch}`);
-  st.textContent = bits.join(" · ");
-  if (!matches.length || (status && status.errors && status.errors.length)) {
+  const showStatus = () => {
+    st.textContent = bits.concat(`${matches.length} ${rankedOnly ? "ranked " : ""}matches`, heroesF.patch ? [`Patch ${heroesF.patch}`] : []).join(" · ");
+  };
+  showStatus();
+  const modeSw = $("#mode-switch");
+  const paintMode = () => modeSw.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", (b.dataset.mode === "ranked") === rankedOnly));
+  paintMode();
+  modeSw.onclick = ev => {
+    const b = ev.target.closest("button"); if (!b || (b.dataset.mode === "ranked") === rankedOnly) return;
+    rankedOnly = b.dataset.mode === "ranked"; try { localStorage.setItem("squad-ranked", rankedOnly ? "1" : "0"); } catch {}
+    applyMode(); paintMode(); showStatus(); window.__app.ctx = ctx; render(); if (window.__matchRender) window.__matchRender();
+  };
+  if (!allMatches.length || (status && status.errors && status.errors.length)) {
     st.classList.add("warn");
     st.textContent += " · " + ((status && status.errors && status.errors[0]) || "No match history yet — skill orders still work");
   }
