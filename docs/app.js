@@ -374,6 +374,7 @@
     if (!document.getElementById("tab-" + name)) name = "record";
     document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("active", s.dataset.tab === name));
     document.dispatchEvent(new CustomEvent("squad:tab", {detail:name}));
+    document.querySelector(".tabbar").style.setProperty("--nav-index", Math.max(0,tabs.findIndex(t=>t.dataset.go===name)));
     tabs.forEach(t => { const on = t.dataset.go === name; t.classList.toggle("on", on); on ? t.setAttribute("aria-current", "page") : t.removeAttribute("aria-current"); });
     try { localStorage.setItem("squad-tab", name); } catch {}
     if (scroll && matchMedia("(max-width: 760px)").matches) window.scrollTo({ top: 0, behavior: "auto" });
@@ -382,10 +383,17 @@
   window.__showTab = showTab;
   showTab((() => { try { return localStorage.getItem("squad-tab"); } catch { return null; } })() || "record", false);
 
+  const theme = document.getElementById("theme-toggle");
+  try { const value=localStorage.getItem("squad-theme");if(value)document.documentElement.dataset.theme=value;
+    document.documentElement.classList.toggle("solid-surfaces",localStorage.getItem("squad-solid")==="1");
+    document.documentElement.classList.toggle("reduce-motion",localStorage.getItem("squad-motion")==="1"); } catch {}
+  theme.onclick=()=>{const dark=document.documentElement.dataset.theme==="dark"||(!document.documentElement.dataset.theme&&matchMedia("(prefers-color-scheme:dark)").matches);const next=dark?"light":"dark";document.documentElement.dataset.theme=next;try{localStorage.setItem("squad-theme",next);}catch{}};
+  for(const [id,cls,key]of [["solid-surfaces","solid-surfaces","squad-solid"],["reduce-motion","reduce-motion","squad-motion"]]){const input=document.getElementById(id);input.checked=document.documentElement.classList.contains(cls);input.onchange=()=>{document.documentElement.classList.toggle(cls,input.checked);try{localStorage.setItem(key,input.checked?"1":"0");}catch{}};}
+  document.addEventListener("error",e=>{if(e.target.matches?.("img.item-image"))e.target.closest(".item-art")?.classList.add("image-missing");},true);
   render();
 
   // hand shared pieces to the live-match module
-  window.__app = { ctx, heroes, squad, meta, T, allMatches, items:itemsF.items || [], itemTemplates, itemPatch:itemsF.patch, patchReview, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
+  window.__app = { ctx, heroes, squad, meta, T, allMatches, items:itemsF.items || [], itemTemplates, itemPatch:itemsF.patch, heroPatch:heroesF.patch, patchReview, esc, pct, wl, heroName, label, renderBrief, lab: getLab };
   const ms = document.createElement("script"); ms.src = "match.js";
   ms.onerror = () => { const e = document.createElement("p"); e.className = "warn"; e.textContent = "Match tools could not load. Your selected plan is saved; reopen the app to retry."; $("#tab-match").prepend(e); };
   document.body.appendChild(ms);

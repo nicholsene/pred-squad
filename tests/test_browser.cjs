@@ -12,6 +12,9 @@ const browser=await chromium.launch({headless:true,args:["--use-fake-ui-for-medi
 try{
  const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:"block"}),page=await context.newPage();
  page.on("pageerror",e=>errors.push(e.message));
+ // Flow fixture: source-gating behavior is covered by test_counterbuild.js.
+ await page.route("**/data/patch-review.json*",async route=>{const report=JSON.parse(fs.readFileSync(path.join(root,"data/patch-review.json")));await route.fulfill({contentType:"application/json",body:JSON.stringify({...report,status:"initial-baseline",sourceProblems:[]})});});
+
  // Deliberately delay Match to exercise the original handoff race.
  await page.route("**/match.js",async route=>{await new Promise(r=>setTimeout(r,1200));await route.continue();});
  await page.addInitScript(()=>{
@@ -34,6 +37,30 @@ try{
  const current=Object.values(state.setup.ours).map(p=>p.hero),heroChoices=await page.locator('#setup select[data-path]').first().locator('option').evaluateAll(os=>os.map(o=>o.value));
  const alternate=heroChoices.find(h=>h&&!current.includes(h));
  if(alternate){await page.locator('#setup select[data-path]').first().selectOption(alternate);state=await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")));assert.equal(state.setup.ours.OFFLANE.hero,alternate);}
+ // Reviewed starting-build flow. Text suggestions are mocked here; parser/OCR gates have separate tests.
+ await page.locator('[data-go="picks"]').click();
+ await page.locator('#starting-build-open').click();
+ const plannedIds=['Overlord','Augmentation','Basilisk','Legacy','MistmeadowBuckler','Elafrost'];
+ const planItems=await page.evaluate(ids=>ids.map(n=>window.__app.items.find(i=>i.name===n)),plannedIds);
+ for(let i=0;i<6;i++)await page.locator(`[data-build-item="${i}"]`).fill(planItems[i].label);
+ await page.locator('#build-next').selectOption('Augmentation');
+ await page.locator('#build-save').click();assert.match(await page.locator('#build-error').innerText(),/Confirm/);
+ await page.locator('#build-confirm').check();await page.locator('#build-save').click();
+ await page.waitForFunction(()=>Object.keys(JSON.parse(localStorage.getItem('squad-match')).buildPlans).length===1);
+ const storedBaseline=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('squad-match'));return Object.values(s.buildPlans)[0];});
+ assert.equal(storedBaseline.items.length,6);assert.equal(storedBaseline.nextItem,'Augmentation');assert(!JSON.stringify(storedBaseline).includes('data:image'));
+ await page.locator('#starting-build-open').click();
+ await page.locator('#build-next').selectOption('');
+ await page.locator('[data-build-item="5"]').fill(planItems[5].label);
+ assert.equal(await page.locator('#build-next').inputValue(),'','an explicitly undecided purchase must remain undecided');
+ await page.evaluate(ids=>window.BuildScan.scan=async()=>({items:ids,suggestions:ids.map(name=>({name,label:window.__app.items.find(i=>i.name===name).label})),uncertain:[],issues:['Review suggested names'],requiresReview:true}),plannedIds);
+ await page.locator('#build-photo').setInputFiles({name:'build.png',mimeType:'image/png',buffer:Buffer.from(await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=4;return c.toDataURL('image/png').split(',')[1];}),'base64')});
+ await page.waitForFunction(()=>document.querySelector('#build-read-progress').textContent.includes('Review suggested names'));
+ assert(!await page.locator('#build-confirm').isChecked());
+ await page.locator('[data-build-item="3"]').focus();
+ await page.locator('[data-candidate="Basilisk"]').click();assert.equal(await page.locator('[data-build-item="3"]').inputValue(),'Basilisk');
+ await page.locator('dialog [data-close]').click();
+ await page.locator('[data-go="match"]').click();
  await page.locator('#clock-start').click();
  await page.waitForFunction(()=>JSON.parse(localStorage.getItem("squad-match")).stage==="live");
  if(!await page.locator('#wake').isChecked())await page.locator('label.toggle').click();await page.waitForFunction(()=>document.querySelector('#wake-note').textContent.includes('Screen stays on'));
@@ -66,7 +93,7 @@ try{
    const enemy=cat.find(i=>i.slot==="PASSIVE"&&!i.hidden&&i.stats.MAGICAL_POWER>=70);
    const own=cat.find(i=>i.slot==="PASSIVE"&&!i.hidden&&i.stats.MAGICAL_POWER>0&&i.cost>0&&i.cost<1500);
    const setup=JSON.parse(localStorage.getItem("squad-match")).setup;
-   return {enemy,own,setup,playerIndex:["OFFLANE","JUNGLE","MIDLANE","SUPPORT","CARRY"].findIndex(r=>setup.ours[r]?.who)};
+   return {enemy,own,setup,playerIndex:["OFFLANE","JUNGLE","MIDLANE","SUPPORT","CARRY"].findIndex(r=>setup.ours[r]?.who===JSON.parse(localStorage.getItem("squad-me")))};
  });
  for(const [i,role] of ["OFFLANE","JUNGLE","MIDLANE","SUPPORT","CARRY"].entries())if(observed.setup.ours[role]?.hero)await page.locator(`#scan-review select[data-side="ours"][data-row="${i}"]`).selectOption(observed.setup.ours[role].hero);
  await page.locator('#scan-review select[data-side="theirs"][data-row="2"]').selectOption('gideon');
@@ -97,6 +124,33 @@ try{
  assert(await page.locator('#counterbuild').evaluate(el=>el.querySelector('.counter-player.mine').compareDocumentPosition(el.querySelector('[data-section="threats"]'))&Node.DOCUMENT_POSITION_FOLLOWING));
  fs.mkdirSync(path.resolve(__dirname,"../.test-artifacts"),{recursive:true});
  await page.locator("#counterbuild").screenshot({path:path.resolve(__dirname,"../.test-artifacts/counterbuild-mobile.png")});
+ const ownChoices=page.locator('#counterbuild .counter-player.mine .counter-purchases').first().locator('[data-choose-pivot]');
+ assert.equal(await ownChoices.count(),3,'one counter need should offer three eligible alternatives');
+ assert(await page.locator('#counterbuild .counter-player.mine img.item-image').count()>0,'recommendations show actual item artwork');
+ await ownChoices.first().click();
+ await page.waitForFunction(()=>Object.keys(JSON.parse(localStorage.getItem('squad-match')).pivotIntents).length===1);
+ const intent=await page.evaluate(()=>Object.values(JSON.parse(localStorage.getItem('squad-match')).pivotIntents)[0]);
+ assert.equal(intent.countsAsOwned,false);assert(intent.role);assert(!JSON.stringify(intent).includes('data:image'));
+ await page.locator('#team-intents summary').click();
+ assert.match(await page.locator('#team-intents').innerText(),/Purchase unconfirmed/);
+ // Phone visual/accessibility checks for the deployed design.
+ await page.setViewportSize({width:320,height:760});
+ await page.evaluate(()=>{document.documentElement.dataset.theme='dark';document.documentElement.classList.add('reduce-motion','solid-surfaces');});
+ const overflow=await page.evaluate(()=>[...document.querySelectorAll('body *')].filter(el=>el.getClientRects().length&&el.getBoundingClientRect().right>innerWidth+1).slice(0,15).map(el=>({tag:el.tagName,id:el.id,cls:el.className,right:el.getBoundingClientRect().right,text:el.textContent.slice(0,60)})));
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Match must fit a narrow phone: '+JSON.stringify(overflow));
+ await page.evaluate(()=>window.scrollTo(0,0));
+ await page.screenshot({path:path.resolve(__dirname,'../.test-artifacts/focus-dark-320.png')});
+ const artwork=page.locator('#counterbuild .item-art').first();
+ await artwork.locator('img').evaluate(img=>img.dispatchEvent(new Event('error')));
+ assert(await artwork.evaluate(el=>el.classList.contains('image-missing')),'missing artwork keeps its fallback');
+ await page.locator('[data-go="picks"]').click();
+ await page.locator('#starting-build-open').click();
+ assert(await page.locator('.build-dialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'starting-plan review must fit a narrow phone');
+ await page.screenshot({path:path.resolve(__dirname,'../.test-artifacts/focus-plan-dark-320.png')});
+ await page.locator('dialog [data-close]').click();
+ await page.setViewportSize({width:390,height:844});
+ await page.evaluate(()=>{document.documentElement.dataset.theme='light';document.documentElement.classList.remove('reduce-motion','solid-surfaces');});
+ await page.locator('[data-go="match"]').click();
  await page.locator('#undo-scan').click();
  // Headless fake camera verifies framing and track cleanup, without recording a real camera.
  await page.evaluate(()=>{window.__cameraStreams=[];const get=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async opts=>{const stream=await get(opts);window.__cameraStreams.push(stream);return stream;};});
@@ -111,7 +165,7 @@ try{
  await page.locator('#match-finish').click();await page.waitForSelector('#postmatch:not([hidden])');
  fs.mkdirSync(path.resolve(__dirname,"../.test-artifacts"),{recursive:true});
  await page.screenshot({path:path.resolve(__dirname,"../.test-artifacts/match-mobile.png"),fullPage:true});
- assert.deepEqual(errors,[]);console.log("ok: slow-module handoff, identity, editable setup, start, timers, reload, scan review, correction, undo, camera guides, wake-lock acquisition/release/retry and finish");
+ assert.deepEqual(errors,[]);console.log("ok: slow-module handoff, identity, editable setup, start, timers, reload, scan review, correction, undo, camera guides, reviewed starting plans, three item alternatives, planned pivots, narrow-phone layout, image fallbacks, wake-lock acquisition/release/retry and finish");
  await context.close();
 }finally{await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

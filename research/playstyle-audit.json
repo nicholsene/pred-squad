@@ -1,0 +1,174 @@
+{
+  "source": "docs/data/matches.json",
+  "sourceUpdatedAt": "2026-10-29T17:57:28Z",
+  "uniqueMatches": 111,
+  "dateRangeUTC": [
+    "2026-10-08T21:42:06Z",
+    "2026-10-29T02:26:16Z"
+  ],
+  "method": {
+    "rates": "Participant totals divided by their total match duration in minutes.",
+    "deathsPerMatch": "Deaths divided by appearances.",
+    "cs": "API minionsKilled including source categories, not lane-only CS.",
+    "damage": "API heroDamage.",
+    "interpretation": "Descriptive historical aggregates, not causal playstyle labels."
+  },
+  "players": {
+    "stealinNICKELS": {
+      "appearances": 67,
+      "modes": {
+        "RANKED": 27,
+        "STANDARD": 40
+      },
+      "patches": {
+        "1.17.2": 67
+      },
+      "roles": {
+        "JUNGLE": 27,
+        "CARRY": 20,
+        "OFFLANE": 17,
+        "MIDLANE": 2,
+        "SUPPORT": 1
+      },
+      "totalMinutes": 1925.567,
+      "deaths": 551,
+      "deathsPerMatch": 8.224,
+      "deathsPerMinute": 0.2861,
+      "cs": 11878,
+      "csPerMinute": 6.169,
+      "heroDamage": 877789,
+      "heroDamagePerMinute": 455.86,
+      "heroRoleBuckets": 19,
+      "bucketsWithAtLeast5Matches": 4,
+      "bucketsWithAtLeast10Matches": 3,
+      "topHeroRoles": [
+        {
+          "hero": "greystone",
+          "role": "JUNGLE",
+          "matches": 20
+        },
+        {
+          "hero": "greystone",
+          "role": "OFFLANE",
+          "matches": 14
+        },
+        {
+          "hero": "sparrow",
+          "role": "CARRY",
+          "matches": 10
+        }
+      ]
+    },
+    "DiMu": {
+      "appearances": 78,
+      "modes": {
+        "RANKED": 35,
+        "STANDARD": 43
+      },
+      "patches": {
+        "1.17.2": 77,
+        "1.17.1": 1
+      },
+      "roles": {
+        "SUPPORT": 34,
+        "MIDLANE": 17,
+        "CARRY": 13,
+        "OFFLANE": 11,
+        "JUNGLE": 3
+      },
+      "totalMinutes": 2144.833,
+      "deaths": 452,
+      "deathsPerMatch": 5.795,
+      "deathsPerMinute": 0.2107,
+      "cs": 10871,
+      "csPerMinute": 5.068,
+      "heroDamage": 855966,
+      "heroDamagePerMinute": 399.083,
+      "heroRoleBuckets": 27,
+      "bucketsWithAtLeast5Matches": 8,
+      "bucketsWithAtLeast10Matches": 0,
+      "topHeroRoles": [
+        {
+          "hero": "legion",
+          "role": "CARRY",
+          "matches": 9
+        },
+        {
+          "hero": "phase",
+          "role": "SUPPORT",
+          "matches": 9
+        },
+        {
+          "hero": "lt-belica",
+          "role": "MIDLANE",
+          "matches": 6
+        },
+        {
+          "hero": "renna",
+          "role": "MIDLANE",
+          "matches": 6
+        },
+        {
+          "hero": "steel",
+          "role": "SUPPORT",
+          "matches": 6
+        }
+      ]
+    },
+    "inFamoUs": {
+      "appearances": 78,
+      "modes": {
+        "RANKED": 37,
+        "STANDARD": 41
+      },
+      "patches": {
+        "1.17.2": 77,
+        "1.17.1": 1
+      },
+      "roles": {
+        "CARRY": 22,
+        "JUNGLE": 19,
+        "SUPPORT": 16,
+        "OFFLANE": 13,
+        "MIDLANE": 8
+      },
+      "totalMinutes": 2138.517,
+      "deaths": 401,
+      "deathsPerMatch": 5.141,
+      "deathsPerMinute": 0.1875,
+      "cs": 15457,
+      "csPerMinute": 7.228,
+      "heroDamage": 970445,
+      "heroDamagePerMinute": 453.794,
+      "heroRoleBuckets": 23,
+      "bucketsWithAtLeast5Matches": 5,
+      "bucketsWithAtLeast10Matches": 2,
+      "topHeroRoles": [
+        {
+          "hero": "steel",
+          "role": "SUPPORT",
+          "matches": 11
+        },
+        {
+          "hero": "sparrow",
+          "role": "CARRY",
+          "matches": 11
+        },
+        {
+          "hero": "khaimera",
+          "role": "JUNGLE",
+          "matches": 9
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Player appearances overlap within matches.",
+    "Mixed roles, modes and match lengths prevent fair cross-player rankings.",
+    "Normalization currently replaces absent counts with zero; source completeness cannot be established from normalized completeness.",
+    "Friendly-jungle minion counts are queried but discarded.",
+    "No retained purchase timeline, combat events, damage-type breakdown, positioning, ability accuracy, healing/shield output or death causes.",
+    "Gold-curve semantics require verification.",
+    "Final inventories and outcomes must not be used as earlier recommendation inputs."
+  ]
+}

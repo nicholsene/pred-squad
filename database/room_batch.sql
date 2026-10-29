@@ -17,7 +17,7 @@ begin
   for c in select value from jsonb_array_elements(p_changes) loop
     if jsonb_typeof(c->'path') is distinct from 'array' then raise exception 'bad path'; end if;
     select array_agg(value order by ord) into path from jsonb_array_elements_text(c->'path') with ordinality as x(value,ord);
-    if coalesce(array_length(path,1),0) not between 1 and 4 or not(path[1]=any(array['schema','id','stage','setup','live','clock','board','objectives','events','recommendation','finishedAt','reviewMatch'])) or path && array['__proto__','constructor','prototype'] then raise exception 'bad path'; end if;
+    if coalesce(array_length(path,1),0) not between 1 and 4 or not(path[1]=any(array['schema','id','stage','setup','live','clock','board','objectives','events','recommendation','finishedAt','reviewMatch','buildPlans','pivotIntents'])) or path && array['__proto__','constructor','prototype'] then raise exception 'bad path'; end if;
     if c ? 'increment' then
       if path[1]<>'live' or array_length(path,1)<>3 or path[3] not in ('deaths','wards') or abs((c->>'increment')::integer)<>1 then raise exception 'bad increment'; end if;
       val:=to_jsonb(greatest(0,coalesce((s#>>path)::integer,0)+(c->>'increment')::integer));

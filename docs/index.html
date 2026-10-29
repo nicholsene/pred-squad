@@ -18,28 +18,29 @@
 <body>
 <div class="ambient" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
 
-<header class="bar glass">
+<header class="bar">
   <div class="bar-in">
     <div class="brand">
-      <h1>Squad Planner</h1>
+      <h1>Squad</h1>
       <div class="status-row"><p id="status" class="status"></p>
         <span class="ctl" id="mode-switch" role="group" aria-label="Which games count"><button type="button" data-mode="all" aria-pressed="true">All games</button><button type="button" data-mode="ranked" aria-pressed="false">Ranked only</button></span></div>
     </div>
     <div id="picker" class="chips" role="group" aria-label="Who's playing"></div>
+    <details class="appearance"><summary>Appearance</summary><button class="chip" id="theme-toggle" type="button">Switch appearance</button><label><input id="solid-surfaces" type="checkbox"> Reduce transparency</label><label><input id="reduce-motion" type="checkbox"> Reduce motion</label></details>
   </div>
 </header>
 
 <main class="wrap">
   <section class="card glass" id="tab-record" data-tab="record" aria-labelledby="rec-h">
     <div class="card-head">
-      <h2 id="rec-h"><span class="step">1</span>Record together</h2>
+      <h2 id="rec-h"><span class="step">1</span>Your record. Together.</h2>
     </div>
     <div id="record"></div>
   </section>
 
   <section class="card glass" id="tab-stats" data-tab="stats" aria-labelledby="stats-h">
     <div class="card-head">
-      <h2 id="stats-h"><span class="step">2</span>Player stats</h2>
+      <h2 id="stats-h"><span class="step">2</span>See your patterns.</h2>
       <div class="seg" role="tablist" aria-label="Stat scope">
         <span class="seg-pill" aria-hidden="true"></span>
         <button class="on" data-scope="group" role="tab" aria-selected="true">With group</button>
@@ -53,21 +54,25 @@
 
   <section class="card glass" id="tab-picks" data-tab="picks" aria-labelledby="sug-h">
     <div class="card-head">
-      <h2 id="sug-h"><span class="step">3</span>Suggested lanes &amp; heroes</h2>
+      <h2 id="sug-h"><span class="step">3</span>Your game plan.</h2>
     </div>
     <p class="note">Recommendation scores blend your results with patch meta. They are not calibrated win probabilities. Small samples mean more uncertainty.</p>
+    <div id="starting-builds" class="tile"></div>
+    <details class="plan-lineup"><summary>Edit your lineup</summary><div id="plan-setup"></div></details>
+    <div class="sub-h">Picks and roles</div>
     <div id="draft-controls" class="tile"></div>
     <div id="suggest"></div>
   </section>
 
   <section class="card glass" id="tab-match" data-tab="match" aria-labelledby="match-h">
     <div class="card-head">
-      <h2 id="match-h"><span class="step">4</span>Live match</h2>
+      <h2 id="match-h"><span class="step">4</span>Your next move.</h2>
       <select id="me" class="me" aria-label="Who are you"></select>
     </div>
-    <div id="lifecycle" class="tile"></div>
-    <div id="room" class="tile room"></div>
+    <div class="match-status"><div id="lifecycle" class="tile"></div><div id="clock" class="tile clock"></div></div>
+    <details class="room-tools"><summary>Shared squad room</summary><div id="room" class="tile room"></div></details>
     <div id="counterbuild" class="tile counterbuild"></div>
+    <div id="team-intents"></div>
     <div id="scan-review" class="tile" hidden></div>
 
     <div class="match-tools">
@@ -80,11 +85,10 @@
     <p id="wake-note" class="note" style="margin:6px 0 0"></p>
     <div id="scan-progress" class="scan-progress" hidden><div class="bar-meter"><i></i></div><span class="muted"></span></div>
 
-    <div class="sub-h">Lineup</div>
-    <div id="setup"></div>
+    <details id="match-lineup-details"><summary>Review or edit lineup</summary><div id="setup"></div></details>
 
     <div class="sub-h">Live</div>
-    <div id="clock" class="tile clock"></div>
+
     <div class="board-tools">
       <label class="chip cta scan-btn"><input type="file" id="board-file" accept="image/*" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Scan scoreboard</label>
@@ -106,23 +110,27 @@
   <footer class="foot">Data from <a href="https://pred.gg" rel="noopener">pred.gg</a> · private squad tool</footer>
 </main>
 
-<nav class="tabbar glass" aria-label="Sections">
-  <button data-go="record" class="on" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Record</span></button>
+<div class="app-dock"><nav class="tabbar glass" aria-label="Sections">
+  <span class="nav-indicator" aria-hidden="true"></span>
+  <button data-go="record" class="on" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Records</span></button>
   <button data-go="stats"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>Stats</span></button>
-  <button data-go="picks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg><span>Picks</span></button>
+  <button data-go="picks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/></svg><span>Plan</span></button>
   <button data-go="match"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13h6l-1 8 8-10h-6z"/></svg><span>Match</span></button>
-</nav>
+</nav><button id="quick-scan" class="quick-scan glass" type="button" aria-label="Open scan camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button></div>
 
 <script src="engine.js"></script>
 <script src="itemlab.js"></script>
+<script src="buildplans.js"></script>
 <script src="counterbuild.js"></script>
 <script src="itemvision.js"></script>
 <script src="photo-prep.js"></script>
 <script src="camera.js"></script>
 <script src="scan.js"></script>
+<script src="buildscan.js"></script>
 <script src="session.js"></script>
 <script src="minimap.js"></script>
 <script src="insights.js"></script>
+<script src="planning.js"></script>
 <script src="app.js"></script>
 <script>if ("serviceWorker" in navigator) {
   const had = !!navigator.serviceWorker.controller; let done = false;
