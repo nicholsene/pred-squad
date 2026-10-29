@@ -4,6 +4,7 @@ Writes three files into docs/data/:
   heroes.json   public hero data (abilities, recommended skill order)
   matches.json  every match with at least one squad member (incremental)
   meta.json     current-patch hero/role win rates, lane matchups, core builds
+  items.json    item catalogue: cost, stats, type
 
 Only squad members are identified in matches.json. Other players are kept
 as hero/role/team/stats with no name or id.
@@ -32,12 +33,19 @@ HEROES_Q = """
 
 VERSIONS_Q = "{ versions { id name releaseDate } }"
 
+# Item catalogue: price, stats and type for every item (public data).
+ITEMS_Q = """
+{ items { data { name displayName totalPrice price slotType rarity aggressionType class isHidden
+    stats { stat value } } } }
+"""
+
 MP_FIELDS = """
   player { id } role team hero { slug }
   kills deaths assists level gold goldSpent wardsPlaced wardsDestroyed
   heroDamage heroDamageTaken totalDamageMitigated minionsKilled
   laneMinionsKilled neutralMinionsEnemyJungle neutralMinionsTeamJungle
   totalDamageDealtToObjectives totalDamageDealtToStructures
+  inventoryItemData { name } goldEarnedAtInterval
 """
 
 MATCHES_Q = """
@@ -52,6 +60,13 @@ query($id: ID!, $limit: Int, $offset: Int, $modes: [GameMode!]) {
     }
   }
 }
+""" % MP_FIELDS
+
+MATCH_Q = """
+query($id: ID!) { match(by: {id: $id}) {
+  id startTime duration gameMode winningTeam version { name }
+  matchPlayers { %s }
+} }
 """ % MP_FIELDS
 
 # Win rates per hero/role are available to third-party apps.
@@ -109,6 +124,20 @@ def pct(x):
 
 
 # ---------------- heroes ----------------
+def fetch_items(api: PredGG) -> list[dict]:
+    out = []
+    for it in api.query(ITEMS_Q)["items"]:
+        d = it.get("data") or {}
+        if not d.get("name"):
+            continue   # hidden items are kept: upgraded crests and jungle items show up in inventories
+        out.append({"name": d["name"], "label": d.get("displayName") or d["name"],
+                    "cost": d.get("totalPrice") or d.get("price") or 0, "slot": d.get("slotType"),
+                    "rarity": d.get("rarity"), "type": d.get("aggressionType"), "class": d.get("class"),
+                    "hidden": bool(d.get("isHidden")),
+                    "stats": {s["stat"]: s["value"] for s in (d.get("stats") or []) if s.get("stat")}})
+    return sorted(out, key=lambda x: x["label"])
+
+
 def fetch_heroes(api: PredGG) -> list[dict]:
     data = api.query(HEROES_Q)
     heroes = []
@@ -164,6 +193,8 @@ def normalise_match(m: dict, squad_ids: dict[str, str]) -> dict:
             "enemyJungle": mp.get("neutralMinionsEnemyJungle", 0),
             "obj": mp.get("totalDamageDealtToObjectives", 0),
             "towers": mp.get("totalDamageDealtToStructures", 0),
+            "items": [i["name"] for i in (mp.get("inventoryItemData") or []) if i and i.get("name")],
+            "goldCurve": mp.get("goldEarnedAtInterval") or [],
         })
     return {
         "id": m["id"],
@@ -200,6 +231,17 @@ def fetch_matches(api: PredGG, existing: dict) -> dict:
             if fresh == 0:          # whole page already known -> caught up
                 break
         print(f"  {p['key']}: {new} new matches")
+    # backfill matches stored before items/gold curves were collected
+    old = [mid for mid, m in by_id.items() if m["players"] and "items" not in m["players"][0]]
+    for mid in old[:CONFIG.get("backfillPerRun", 150)]:
+        try:
+            m = api.query(MATCH_Q, {"id": mid}).get("match")
+            if m:
+                by_id[mid] = normalise_match(m, squad_ids)
+        except PredGGError as e:
+            print(f"  backfill {mid}: {e}")
+    if old:
+        print(f"  backfilled {min(len(old), CONFIG.get('backfillPerRun', 150))} of {len(old)} older matches")
     matches = sorted(by_id.values(), key=lambda m: m["start"] or "", reverse=True)
     return {"updatedAt": now_iso(), "matches": matches}
 
@@ -264,6 +306,13 @@ def main() -> int:
     patch, version_ids = current_patch(api)
     save("heroes.json", {"updatedAt": now_iso(), "patch": patch, "heroes": heroes})
     print(f"  {len(heroes)} heroes, patch {patch}")
+    try:
+        items = fetch_items(api)
+        save("items.json", {"updatedAt": now_iso(), "patch": patch, "items": items})
+        print(f"  {len(items)} items")
+    except PredGGError as e:
+        status["errors"].append(f"items: {e}")
+        print(f"  items: {e}")
 
     if not api.has_credentials:
         msg = "No pred.gg API credentials set; match history and meta need them."

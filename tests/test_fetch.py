@@ -14,6 +14,8 @@ SQUAD = {p["predId"]: p["key"] for p in fetch.CONFIG["players"]}
 IDS = list(SQUAD)
 HEROES = ["greystone", "sparrow", "khaimera", "crunch", "steel", "phase", "renna", "legion", "terra", "aurora"]
 ROLES = ["OFFLANE", "JUNGLE", "MIDLANE", "SUPPORT", "CARRY"]
+ITEMS = ["Tainted Rounds", "Imperator", "Overlord", "Spirit Breaker", "Crystal Tear", "Dread",
+         "Stonewall", "Mesh", "Brutallax", "Nuclear Rounds", "Leafsong", "Magnify"]
 
 
 def fake_match(i):
@@ -30,7 +32,9 @@ def fake_match(i):
                         "wardsDestroyed": 0, "heroDamage": 15000, "heroDamageTaken": 20000, "totalDamageMitigated": 9000,
                         "minionsKilled": 200, "laneMinionsKilled": 180, "neutralMinionsEnemyJungle": 0,
                         "neutralMinionsTeamJungle": 0, "totalDamageDealtToObjectives": rnd.choice([0, 5000]),
-                        "totalDamageDealtToStructures": 3000})
+                        "totalDamageDealtToStructures": 3000,
+                        "inventoryItemData": [{"name": n} for n in rnd.sample(ITEMS, 5)] + [None],
+                        "goldEarnedAtInterval": [350 + 300 * k for k in range(25)]})
     return {"id": f"m{i:04d}", "startTime": f"2026-10-{1 + i % 28:02d}T12:00:00Z", "duration": 1800,
             "gameMode": "RANKED", "winningTeam": rnd.choice(["DAWN", "DUSK"]), "version": {"name": "1.17.2"},
             "matchPlayers": mps}
@@ -50,6 +54,8 @@ class FakeAPI:
             mine.sort(key=lambda m: m["startTime"], reverse=True)
             page = mine[v["offset"]: v["offset"] + v["limit"]]
             return {"player": {"matchesPaginated": {"totalCount": len(mine), "results": [{"match": m} for m in page]}}}
+        if "match(by:" in q:
+            return {"match": next(m for m in ALL if m["id"] == v["id"])}
         raise AssertionError("unexpected query")
 
 
@@ -71,6 +77,16 @@ def main():
         out2 = fetch.fetch_matches(api, out)
         assert len(out2["matches"]) == n_first
         assert api.calls - calls_before == len(IDS), api.calls - calls_before
+        # items + gold curve kept, empty inventory slots dropped
+        p0 = out2["matches"][0]["players"][0]
+        assert len(p0["items"]) == 5 and len(p0["goldCurve"]) == 25, p0
+        # matches saved before items existed are backfilled by id
+        for m in out2["matches"][-10:]:   # oldest, so paging does not refresh them
+            for p in m["players"]:
+                p.pop("items"); p.pop("goldCurve")
+        out3 = fetch.fetch_matches(api, out2)
+        assert all("items" in p for m in out3["matches"] for p in m["players"])
+        out2 = out3
         fetch.DATA = Path(d)
         fetch.save("matches.json", out2)
         json.loads((Path(d) / "matches.json").read_text())
