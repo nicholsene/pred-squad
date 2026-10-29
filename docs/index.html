@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squad Planner</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <h1>Squad Planner</h1>
+    <p class="sub">Predecessor · records, lineups and picks for whoever's on tonight</p>
+    <p id="status" class="status"></p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card" aria-labelledby="who-h">
+    <h2 id="who-h">1 · Who's playing?</h2>
+    <div id="picker" class="chips" role="group" aria-label="Squad members"></div>
+    <label class="check"><input type="checkbox" id="exact" checked> Only games where exactly this group played together</label>
+  </section>
+
+  <section class="card" aria-labelledby="rec-h">
+    <h2 id="rec-h">2 · Record together</h2>
+    <div id="record"></div>
+  </section>
+
+  <section class="card" aria-labelledby="stats-h">
+    <h2 id="stats-h">3 · Player stats</h2>
+    <div class="seg" role="tablist">
+      <button class="on" data-scope="group" role="tab">With this group</button>
+      <button data-scope="all" role="tab">All games</button>
+    </div>
+    <div id="stats" class="grid"></div>
+  </section>
+
+  <section class="card" aria-labelledby="sug-h">
+    <h2 id="sug-h">4 · Suggested lanes &amp; heroes</h2>
+    <p class="note">Win chances are estimates. They start from the patch meta and move toward your own results as games pile up, so a 1–0 hero won't outrank a proven pick.</p>
+    <div id="suggest"></div>
+  </section>
+
+  <section class="card" aria-labelledby="plan-h">
+    <h2 id="plan-h">5 · Game plan</h2>
+    <p class="note">Set each player's lane and hero. Add the enemy laner if you know it for matchup advice.</p>
+    <div id="plan"></div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  Data: <a href="https://pred.gg" rel="noopener">pred.gg</a> API · private squad tool
+</footer>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

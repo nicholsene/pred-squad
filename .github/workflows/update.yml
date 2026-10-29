@@ -1,0 +1,50 @@
+name: Update squad data
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 min; meta is refreshed once a day below
+  workflow_dispatch:
+    inputs:
+      meta:
+        description: "Also refresh patch meta"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Decide whether to refresh meta
+        id: meta
+        run: |
+          if [ "${{ inputs.meta }}" = "true" ] || [ "$(date -u +%H%M)" \< "0030" ] || [ ! -f docs/data/meta.json ]; then
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=--skip-meta" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Fetch from pred.gg
+        env:
+          PREDGG_CLIENT_ID: ${{ secrets.PREDGG_CLIENT_ID }}
+          PREDGG_CLIENT_SECRET: ${{ secrets.PREDGG_CLIENT_SECRET }}
+          PREDGG_REFRESH_TOKEN: ${{ secrets.PREDGG_REFRESH_TOKEN }}
+        run: python scripts/fetch.py ${{ steps.meta.outputs.flag }}
+      - name: Commit if changed
+        run: |
+          git config user.name "squad-bot"
+          git config user.email "squad-bot@users.noreply.github.com"
+          git add docs/data
+          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
+          git commit -m "data: update $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push

@@ -1,0 +1,27 @@
+{
+  "players": [
+    {
+      "key": "stealinNICKELS",
+      "label": "stealinNICKELS",
+      "predId": "d4980932-5095-4d51-ad71-2c714a526d50",
+      "note": "PS5 name hidden on pred.gg; shows as user-d4980932"
+    },
+    {
+      "key": "DiMu",
+      "label": "DiMu",
+      "predId": "5e8b81ea-258e-4037-b466-fe285301f5bf"
+    },
+    {
+      "key": "inFamoUs",
+      "label": "inFamoUs",
+      "predId": "09c4145f-6a77-4465-946b-fe351fcad0cc"
+    }
+  ],
+  "gameModes": ["RANKED", "STANDARD"],
+  "maxMatchesPerPlayer": 500,
+  "targets": {
+    "maxDeaths": 4,
+    "minWards": 4,
+    "minObjectiveDamage": 1
+  }
+}
