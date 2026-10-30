@@ -207,7 +207,9 @@ try{
    assert(fit.docWidth<=fit.width+1&&fit.docHeight<=fit.height+1,'Match page must not scroll: '+JSON.stringify(fit));
    assert(fit.focusScroll<=fit.focusHeight+1,'Match core must not overflow: '+JSON.stringify(fit));
    assert(fit.panels.every(p=>p.scroll<=p.height+1),'item and lane content must fit their panels: '+JSON.stringify(fit));
-   assert.equal(fit.lanes.length,5);assert(fit.lanes.every(l=>l.height>0&&l.top>=0&&l.bottom<fit.height-60),'all five lane meters stay on screen: '+JSON.stringify(fit));
+   assert.equal(fit.lanes.length,5);assert(fit.lanes.every(l=>l.height>0),'all lane meters retain readable height');
+   const reachable=await page.evaluate(()=>{const p=document.querySelector('[data-pane="strategy"]');p.scrollTop=p.scrollHeight;const end=document.querySelector('.mf-lane:last-child').getBoundingClientRect(),r=p.getBoundingClientRect();p.scrollTop=0;const priority=document.querySelector('.mf-tactics').getBoundingClientRect();return {last:end.bottom,pane:r.bottom,priority:priority.top,top:r.top};});
+   assert(reachable.last<=reachable.pane+1&&reachable.priority>=reachable.top-1,'priority visible at top and all lanes reachable by scrolling');
    await page.screenshot({path:path.resolve(__dirname,'../.test-artifacts/focus-'+viewport.width+'x'+viewport.height+'.png')});
  }
  await page.setViewportSize({width:320,height:640});
@@ -230,7 +232,7 @@ try{
  await page.locator('#camera-cancel').click();await page.setViewportSize({width:390,height:844});
  assert(await page.evaluate(()=>window.__cameraStreams.every(s=>s.getTracks().every(t=>t.readyState==='ended'))));
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
- await details('lifecycle');await page.locator('#match-finish').click();await page.waitForFunction(()=>JSON.parse(localStorage.getItem('squad-match')).stage==='finished');await details('postmatch');await page.waitForSelector('#postmatch:not([hidden])');
+ await details('lifecycle');await page.locator('#match-finish').click();await page.locator('[data-outcome="win"]').click();await page.waitForFunction(()=>JSON.parse(localStorage.getItem('squad-match')).stage==='finished');await details('postmatch');await page.waitForSelector('#postmatch:not([hidden])');
  fs.mkdirSync(path.resolve(__dirname,"../.test-artifacts"),{recursive:true});
  await page.screenshot({path:path.resolve(__dirname,"../.test-artifacts/match-mobile.png"),fullPage:true});
  assert.deepEqual(errors,[]);console.log("ok: slow-module handoff, identity, five-lane selection, Scan/Manual toggle, current-clock start, editable setup, start, timers, reload, scan review, correction, undo, camera guides, reviewed starting plans, solo/squad scenario optimizer, three item alternatives, planned pivots, narrow-phone layout, image fallbacks, wake-lock acquisition/release/retry and finish");

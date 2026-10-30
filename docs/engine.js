@@ -404,7 +404,48 @@
     return { us, them, goldDiff, goldEstimated, lvlDiff, lanes, fed, calls, late };
   }
 
+  // Transparent snapshot heuristic, not a fight/win probability. Missing fields
+  // contribute no points and never amplify the weights of the remaining fields.
+  const LEAD_WEIGHTS = Object.freeze({lvl:35,cs:15,gold:20,k:15,d:10,a:5});
+  function laneLead(ours={},theirs={},role) {
+    const weights=role==='SUPPORT'?{lvl:35,cs:5,gold:15,k:10,d:20,a:15}:LEAD_WEIGHTS;
+    const scales={lvl:3,cs:30,gold:3000,k:5,d:5,a:8},metrics=[];
+    for(const field of Object.keys(weights)){
+      const a=ours[field],b=theirs[field];
+      if(!Number.isFinite(a)||!Number.isFinite(b)||a<0||b<0||field==='lvl'&&(a<1||b<1||a>18||b>18))continue;
+      const delta=a-b,contribution=Math.max(-1,Math.min(1,delta/scales[field]))*weights[field]*(field==='d'?-1:1);
+      metrics.push({field,delta,weight:weights[field],contribution});
+    }
+    return {score:metrics.length?metrics.reduce((s,m)=>s+m.contribution,0):null,coverage:metrics.reduce((s,m)=>s+m.weight,0),metrics,weights:{...weights}};
+  }
+  function liveStrategy(board,setup={},who,{now=Date.now(),clock=null,objectives={},nameOf=x=>x}={}) {
+    const roles=ROLES.filter(r=>who&&setup.ours?.[r]?.who===who),mine=roles.length===1?roles[0]:null;
+    const matches=board&&ROLES.every((r,i)=>['ours','theirs'].every(s=>!setup[s]?.[r]?.hero||board[s]?.[i]?.hero===setup[s][r].hero));
+    const fresh=!!matches&&Number.isFinite(board.at)&&now>=board.at&&now-board.at<=180000;
+    const base=mine==='JUNGLE'?'Clear safe camps and look for nearby support; avoid blind invades.':mine==='SUPPORT'?'Protect your carry’s farm, maintain vision and avoid isolated trades.':'Collect safe farm, protect your tower and check missing enemies before extending.';
+    if(!fresh)return {fresh:false,role:mine,priority:'Get a current scoreboard',lane:base,team:'Protect towers and collect safe farm until current leads are known.',reason:board?'Snapshot expired or lineup changed.':'No current scoreboard.',lanes:[]};
+    const lanes=ROLES.map((role,i)=>({role,ours:board.ours?.[i]||{},theirs:board.theirs?.[i]||{},...laneLead(board.ours?.[i],board.theirs?.[i],role)}));
+    const own=lanes.find(l=>l.role===mine),delta=(row,f)=>row?.metrics.find(m=>m.field===f)?.delta??null,ld=delta(own,'lvl'),cs=delta(own,'cs');
+    let lane=base,priority='Farm safely and build pressure';
+    if(!mine){priority='Choose your identity';lane='Choose who you are to receive your lane’s specific call.';}
+    else if((ld!==null&&ld<=-1)||(own?.score!==null&&own?.score<=-12)){
+      priority='Stay back and recover';lane=mine==='JUNGLE'?'Clear safe camps and ask teammates to cover entrances; avoid solo contests.':mine==='SUPPORT'?'Stay with your carry, protect safe farm and avoid isolated trades.':'Stay back and farm safely. Avoid solo trades; ask for cover while the gap closes.';
+    }else if(ld!==null&&ld>=1&&own.score>=0){
+      priority='Use your level lead';lane=mine==='JUNGLE'?'Use your level lead to support a nearby lane; keep an escape route and check enemy positions.':mine==='SUPPORT'?'Apply pressure together with your carry; ward exits before moving forward.':'You outlevel your counterpart. Push safe waves and pressure the tower when enemy positions, health and cooldowns allow.';
+    }else if(cs!==null&&cs<=-15&&mine!=='SUPPORT'){priority='Catch up on farm';lane=mine==='JUNGLE'?'Recover your camp clear before forcing another fight.':'Prioritize safe last hits and experience before roaming or forcing a fight.';}
+    else if(own?.score>=12&&own.coverage>=35){priority='Convert your measured lead';lane=mine==='SUPPORT'?'Help your carry convert pressure into safe tower damage, then reset together.':'Pressure a safe wave, look for tower damage and reset before you overextend.';}
+    const measured=lanes.filter(l=>l.score!==null),mean=measured.length>=3?measured.reduce((s,l)=>s+l.score,0)/measured.length:null;
+    let team=mean!==null&&mean<=-8?'Defend towers, recover farm and avoid isolated fights. Set safe vision before contesting.':mean!==null&&mean>=8?'Push safe waves together, then turn pressure into tower damage or a verified objective.':'Keep waves covered, establish vision and regroup before a committed fight.';
+    const threats=lanes.filter(l=>Number.isFinite(l.theirs.k)&&Number.isFinite(l.theirs.d)&&l.theirs.k>=5&&l.theirs.k-l.theirs.d>=4).sort((a,b)=>(b.theirs.k-b.theirs.d)-(a.theirs.k-a.theirs.d));
+    if(threats.length)team='Respect '+nameOf(threats[0].theirs.hero)+'’s observed kill lead. Cover teammates and avoid fighting this threat alone; protect farm first.';
+    const upcoming=Number.isFinite(clock)?Object.entries(objectives).filter(([,e])=>e&&Number.isFinite(e.respawnAt)&&e.respawnAt-clock>0&&e.respawnAt-clock<=60&&!/estimated|heuristic/i.test(e.source||'')).sort((a,b)=>a[1].respawnAt-b[1].respawnAt)[0]:null;
+    if(upcoming){const names={fangtooth:'Fangtooth',orb:'Orb Prime',shaper:'Shaper'},name=names[upcoming[0]]||'the objective';team='Prepare safe vision for '+name+' in about '+Math.ceil(upcoming[1].respawnAt-clock)+'s. Cover nearby waves and check the map before committing'+(mean!==null&&mean<0?'; avoid forcing an even fight.':'.');if(!own||ld===null||ld>=0)priority='Prepare the next objective';}
+    const reason=!own?'Lane identity is unassigned.':ld===null?'Level comparison unread; using other observed stats.':(ld>0?'Up ':ld<0?'Down ':'Even at ')+Math.abs(ld)+' level'+(Math.abs(ld)===1?'':'s')+' versus the same-role counterpart.';
+    return {fresh:true,role:mine,priority,lane,team,reason,lanes,coverage:own?.coverage||0};
+  }
+
   const api = {
+    LEAD_WEIGHTS,laneLead,liveStrategy,
     ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE, boardState,
     shrink, squadRows, togetherMatches, summarize, comboReport, record,
     memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor, matchPlan,

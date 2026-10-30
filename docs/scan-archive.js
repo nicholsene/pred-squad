@@ -8,9 +8,10 @@ function create({url,key,onStatus=()=>{},uploadDelayMs=1500}){
  const pending=new Map(),unsaved=new Map();
  const notify=()=>onStatus({enabled,saved,waiting:waiting+unsaved.size,error:unsaved.size?unsaved.size+' photo(s) could not be saved on this device. Keep this page open and retry.':lastError});
  function db(){return opening||=(new Promise((resolve,reject)=>{const req=indexedDB.open(DB,1);req.onupgradeneeded=()=>req.result.createObjectStore(S,{keyPath:'id'});req.onerror=()=>reject(req.error);req.onsuccess=()=>resolve(req.result);}));}
- async function all(){const d=await db();return new Promise((resolve,reject)=>{const q=d.transaction(S).objectStore(S).getAll();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
+ async function keys(){const d=await db();return new Promise((resolve,reject)=>{const q=d.transaction(S).objectStore(S).getAllKeys();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
+ async function get(id){const d=await db();return new Promise((resolve,reject)=>{const q=d.transaction(S).objectStore(S).get(id);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
  async function edit(id,change){const d=await db();return new Promise((resolve,reject)=>{const tx=d.transaction(S,'readwrite'),s=tx.objectStore(S),q=s.get(id);let value;q.onsuccess=()=>{value=change(q.result);if(value)s.put(value);};tx.oncomplete=()=>resolve(value);tx.onerror=tx.onabort=()=>reject(tx.error||Error('Photo storage failed'));});}
- async function count(){try{const rows=await all();saved=rows.filter(r=>r.uploaded).length;waiting=rows.filter(r=>r.photo||r.revision>r.ackedRevision).length;notify();}catch(e){error(e);}}
+ async function count(){try{const d=await db();const totals=await new Promise((resolve,reject)=>{let saved=0,waiting=0;const tx=d.transaction(S),q=tx.objectStore(S).openCursor();q.onsuccess=()=>{const c=q.result;if(!c)return;const r=c.value;if(r.uploaded)saved++;if(r.photo||r.revision>r.ackedRevision)waiting++;c.continue();};tx.oncomplete=()=>resolve({saved,waiting});tx.onerror=tx.onabort=()=>reject(tx.error||Error('Photo count failed'));});saved=totals.saved;waiting=totals.waiting;notify();}catch(e){error(e);}}
  function error(e){lastError='Photo saving needs attention: '+(e?.message||'device storage unavailable');notify();}
  function identity(){
   let i;try{i=JSON.parse(localStorage.getItem('squad-scan-device'));}catch{}
@@ -27,15 +28,18 @@ function create({url,key,onStatus=()=>{},uploadDelayMs=1500}){
   if(Date.now()<resumeAt){schedule();return;}
   busy=true;let retry=false;
   try{
-   for(const row of await all()){
-    if(holds||!enabled)break;
+   for(const id of await keys()){
+    if(destroyed||holds||!enabled)break;
+    const row=await get(id);if(destroyed||holds||!enabled)break;if(!row)continue;
     if(!row.photo&&row.revision<=row.ackedRevision)continue;
     if(row.photo){
      const form=new FormData();form.set('id',row.id);form.set('metadata',JSON.stringify(row.metadata));form.set('photo',new Blob([row.photo.bytes],{type:row.photo.type}),'capture');
      await request(form);await edit(row.id,r=>({...r,photo:null,uploaded:true}));
     }
     // Re-read: OCR or cancellation may have updated this record during upload.
-    const latest=(await all()).find(r=>r.id===row.id);if(!latest)continue;
+    if(destroyed||holds||!enabled)break;
+    const latest=await get(row.id);if(!latest)continue;
+    if(destroyed||holds||!enabled)break;
     if(latest.revision>latest.ackedRevision){await request({action:'observe',id:row.id,revision:latest.revision,observations:latest.observations});await edit(row.id,r=>({...r,ackedRevision:latest.revision}));}
    }
    lastError='';

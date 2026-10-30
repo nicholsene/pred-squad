@@ -33,12 +33,26 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   assert.equal(await page.locator('.mf-primary').count(),0,'stale optimizer cannot fall back to saved plan');
   await page.evaluate(()=>{window.__optimizerResult=()=>({status:'patch-review-required'});__matchFocus.render();});
   assert.equal(await page.locator('.mf-primary').count(),0,'patch gate cannot fall back to saved plan');
-  await page.evaluate(f=>{window.__optimizerResult=()=>({status:'ready',assignment:[{who:f.who,item:f.item,targets:[],answers:[]}]});__matchFocus.render();__matchFocus.readUpdate();},fixture);
+  assert.match(await page.locator('.mf-tactics').innerText(),/Your lane strategy[\s\S]*Team strategy/);
+  assert.match(await page.locator('.mf-tactics').innerText(),/Farm safely/);
+  await page.evaluate(f=>{window.__stableResult={status:'ready',assignment:[{who:f.who,item:f.item,targets:[],answers:[]}]};window.__optimizerResult=()=>__stableResult;__matchFocus.render();__matchFocus.readUpdate();},fixture);
   assert.equal(await page.locator('.mf-primary').count(),1);assert((await page.evaluate(()=>__said.at(-1))).includes(fixture.label));
   assert.equal(await page.locator('#match-focus button[data-scan]:visible,#quick-scan:visible').count(),1,'one live camera action');
-  await page.evaluate(()=>{const original=Date.now;Date.now=()=>original()+181000;__matchFocus.render();__matchFocus.readUpdate();});
+  const serialized=await page.evaluate(()=>{const original=JSON.stringify;let count=0;JSON.stringify=function(value,...args){if(Array.isArray(value)&&value.includes(__stableResult))count++;return original.call(this,value,...args);};try{for(let i=0;i<100;i++)__matchFocus.tick();return count;}finally{JSON.stringify=original;}});
+  assert.equal(serialized,0,'unchanged clock ticks do not serialize full optimizer results');
+  await page.evaluate(()=>{window.__optimizerResult=()=>window.__changedResult;window.__changedResult={status:'patch-review-required'};__matchFocus.tick();});assert.equal(await page.locator('.mf-primary').count(),0,'changed optimizer result refreshes advice on the next tick');
+  await page.evaluate(()=>{window.__optimizerResult=()=>__stableResult;__matchFocus.tick();});assert.equal(await page.locator('.mf-primary').count(),1);
+  await page.evaluate(()=>{const real=Date.now,at=JSON.parse(localStorage.getItem('squad-match')).board.at;let n=0;Date.now=()=>at+(++n<=2?179999:180001);__matchFocus.render();Date.now=()=>at+180001;__matchFocus.tick();window.__boundaryNow=real;});
+  assert.equal(await page.locator('.mf-primary').count(),0,'expiry during a render cannot leave stale advice cached');
+  await page.evaluate(()=>{Date.now=__boundaryNow;__matchFocus.render();});assert.equal(await page.locator('.mf-primary').count(),1);
+  await page.evaluate(()=>{const original=Date.now;Date.now=()=>original()+181000;__matchFocus.tick();__matchFocus.readUpdate();});
   assert.equal(await page.locator('.mf-primary').count(),0);assert.match(await page.evaluate(()=>__said.at(-1)),/new scoreboard photo/);
   await page.evaluate(()=>BuildPlans.getBaseline=__realBaseline);
+  await page.locator('.mf-actions [data-finish]').click();await page.locator('#match-result-dialog [data-cancel]').click();assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('squad-match')).stage),'live');
+  await page.locator('.mf-actions [data-finish]').click();await page.locator('[data-outcome="win"]').click();assert.match(await page.locator('.mf-tactics').innerText(),/Victory/);
+  await page.reload();await page.waitForFunction(()=>window.__matchFocus);assert.match(await page.locator('.mf-tactics').innerText(),/Victory/);
+  await page.evaluate(()=>__matchFocus.readUpdate());assert.match(await page.evaluate(()=>__said.at(-1)),/Victory/);
+  await page.locator('.mf-actions [data-finish]').click();await page.locator('[data-outcome="loss"]').click();assert.match(await page.locator('.mf-tactics').innerText(),/Defeat/);
   for(let i=0;i<2;i++){
    await page.evaluate(()=>{document.querySelector('#objectives [data-time]').value='9:59';});page.once('dialog',d=>d.accept());await page.evaluate(()=>document.querySelector('#match-clear').click());
    await page.waitForFunction(()=>document.querySelector('#objectives [data-time]').value==='');
