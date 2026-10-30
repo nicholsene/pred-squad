@@ -20,7 +20,7 @@ const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),
    let read;try{read=await page.evaluate(async i=>{
     const t=performance.now(),blob=await(await fetch('/photo/'+i)).blob(),bitmap=await createImageBitmap(blob),canvas=document.createElement('canvas'),scale=Math.min(1,2048/bitmap.width,2048/bitmap.height);canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
     try{
-     const ocr=await FreeOCR.read(canvas),heroes=__catalog.heroes.heroes,squad=__catalog.squad.players,items=__catalog.items.items,detected=PhotoRouter.classify(ocr.lines,{heroes,items,width:canvas.width,height:canvas.height});
+     const ocr=await FreeOCR.read(canvas),heroes=__catalog.heroes.heroes,squad=__catalog.squad.players,items=__catalog.items.items,detected=PhotoRouter.classify(ocr.lines,{heroes,items,width:canvas.width,height:canvas.height,visualMap:PhotoRouter.mapColors(canvas)});
      let parsed=null,quality=null,numericRetry=null,numericRetryError=null;
      if(['scoreboard','unknown'].includes(detected.kind)){
       let p=FreeScan.prepareBoard(ocr,{heroes,squad});

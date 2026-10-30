@@ -477,6 +477,16 @@
       lane=mine==='JUNGLE'?'Keep a safe camp clear going; do not abandon it for a blind lane chase.':mine==='SUPPORT'?'Cover your carry’s next wave, then place safe vision with them.':'Take the next safe wave in '+area(mine)+' before committing to a roam.';
       steps=[safe,'Move a wave forward only after the enemy jungler and your lane counterpart are accounted for.','If a tower push is not covered by your wave and teammates, hold the safe side and keep farming.'];
     }
+    // Turn the measured gap into a concrete next trip, without claiming live
+    // wave positions, respawn times, health or cooldowns that this photo cannot show.
+    if(mine&&mine!=='SUPPORT'&&farmBand==='behind'&&cs!==null){
+      steps[0]=(mine==='JUNGLE'?'Clear one safe camp cycle on your own side':'Collect the next two safe waves in '+area(mine))+' before a voluntary roam; this scan has you '+Math.abs(cs)+' CS behind '+enemyName+'.';
+    }
+    if(mine&&ld!==null&&ld<0){
+      steps[1]='At this scan '+enemyName+' is Lv '+enemy.lvl+' and you are Lv '+me.lvl+'. Catch up in experience before a solo trade; if they push toward you, collect near your tower with cover.';
+    }else if(mine&&posture==='pressure'&&ld>0&&mine!=='JUNGLE'&&mine!=='SUPPORT'){
+      steps[0]='Use your Lv '+me.lvl+' vs '+enemyName+' Lv '+enemy.lvl+' window to move one '+area(mine)+' wave forward, only while their position and your escape route are checked.';
+    }
     const measured=lanes.filter(l=>l.score!==null),mean=measured.length>=3?measured.reduce((n,l)=>n+l.score,0)/measured.length:null,teamMode=mean===null?'unknown':mean<=-8||memory?.teamMode==='recover'&&mean<-4?'recover':mean>=8||memory?.teamMode==='pressure'&&mean>4?'pressure':'even';
     let team=teamMode==='recover'?'Cover the threatened waves first; defend with teammates instead of forcing a river fight.':teamMode==='pressure'?'Cover waves together, then choose a reachable tower behind allied minions. Do not split up to chase kills.':'Cover lanes before grouping; take a supported tower push only after checking enemy positions.';
     const threat=lanes.filter(l=>finite(l.theirs.k)&&finite(l.theirs.d)&&l.theirs.k>=5&&l.theirs.k-l.theirs.d>=4).sort((a,b)=>(b.theirs.k-b.theirs.d)-(a.theirs.k-a.theirs.d))[0];

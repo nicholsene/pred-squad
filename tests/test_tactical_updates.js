@@ -108,3 +108,9 @@ function shape(r){
  assert.notEqual(run(changedLineup,{previousDecision:continued.decision}).rotation?.kind,'support','a changed accepted lineup invalidates a prior-scan support event');
 }
 console.log('ok: concrete next-trip plans, comparable scan deltas, decision stability, optional lane calls and confirmed objective windows');
+
+{
+ const f=fixture();f.board.ours[f.index].lvl=8;f.board.ours[f.index].cs=70;
+ const t=run(f);assert.match(t.nextPush[0],/two safe waves.*30 CS behind/);assert.match(t.nextPush[1],/Lv 10.*Lv 8/);
+ const jungle=fixture('JUNGLE');jungle.board.ours[jungle.index].cs=70;assert.match(run(jungle).nextPush[0],/camp cycle/);
+}

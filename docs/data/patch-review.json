@@ -1,1 +1,20 @@
-{"schema":1,"status":"initial-baseline","reviewRequired":true,"fingerprint":"b1eff70acef9785a2b8b015a4dce6ed933fc2d27ed7516248c44006d89080f5a","baselineFingerprint":"b1eff70acef9785a2b8b015a4dce6ed933fc2d27ed7516248c44006d89080f5a","patches":{"heroes":"1.17.2","items":"1.17.2"},"patchChanged":false,"counterLogicChanged":false,"changes":{"heroes":[],"items":[]},"sourceProblems":[],"officialNotesUrl":"https://www.predecessorgame.com/en-US/news/patch-notes/Patch_Notes_1.17.2","notesInterpretation":"Not performed automatically."}
+{
+  "schema": 1,
+  "status": "initial-baseline",
+  "reviewRequired": true,
+  "fingerprint": "356a6b299f9b03d22bad24994c0da92f3326e9a1a38b5aa9539f4d97dd91930c",
+  "baselineFingerprint": "356a6b299f9b03d22bad24994c0da92f3326e9a1a38b5aa9539f4d97dd91930c",
+  "patches": {
+    "heroes": "1.17.2",
+    "items": "1.17.2"
+  },
+  "patchChanged": false,
+  "counterLogicChanged": false,
+  "changes": {
+    "heroes": [],
+    "items": []
+  },
+  "sourceProblems": [],
+  "officialNotesUrl": "https://www.predecessorgame.com/en-US/news/patch-notes/Patch_Notes_1.17.2",
+  "notesInterpretation": "Not performed automatically."
+}
