@@ -38,6 +38,7 @@ jobs:
       - run: |
           for file in docs/*.js; do node --check "$file"; done
       - run: npm install --no-save --package-lock=false playwright@1.62.1
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: node tests/test_browser.cjs
       - run: node tests/test_scan_flow.cjs
+      - run: node tests/test_match_layout.cjs
