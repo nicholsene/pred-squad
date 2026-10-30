@@ -688,9 +688,9 @@
   let objectivesKey="";
   function renderObjectives() {
     const el=$("#objectives"), now=clockSec();
-    if(el.contains(document.activeElement))return;
-    const nextKey=JSON.stringify(S.objectives);
+    const nextKey=JSON.stringify([S.id,S.objectives]);
     if(objectivesKey!==nextKey){
+    if(el.contains(document.activeElement))return;
     objectivesKey=nextKey;
     el.innerHTML=`<p class="note">Record a visible countdown or a confirmed observation. Respawn periods vary by patch; no timer is guessed from a missing icon.</p>`+OBJECTIVES.map(o=>{
       const event=S.objectives[o.key];

@@ -23,12 +23,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   assert(await page.evaluate(()=>__clockText!==document.querySelector('#clock .clock-big').textContent),'clock text still advances');
   await page.evaluate(()=>document.querySelector('#objectives [data-countdown]').click());
   await page.waitForFunction(()=>!document.querySelector('#objectives [data-objective-remaining]').hidden);
-  await page.evaluate(()=>{window.__realNow=Date.now;Date.now=()=>__realNow()+11000;});
+  await page.evaluate(()=>{const input=document.querySelector('#objectives [data-time]');input.value='1:23';input.focus();window.__realNow=Date.now;Date.now=()=>__realNow()+11000;});
   await page.waitForFunction(()=>document.querySelector('#objectives [data-objective-remaining]').textContent==='0:00');
-  await page.evaluate(()=>Date.now=__realNow);
+  assert.equal(await page.evaluate(()=>document.querySelector('#objectives [data-time]').value),'1:23','focused input is preserved while countdown expires');
+  await page.evaluate(()=>{Date.now=__realNow;document.activeElement.blur();});
   await page.evaluate(()=>document.querySelector('#tracker [data-step]').click());
   assert(await page.evaluate(()=>__originalTrackerButton!==document.querySelector('#tracker [data-step]')),'a tracking change refreshes the controls');
-  await page.evaluate(f=>{window.__optimizerResult=()=>({status:'stale'});BuildPlans.getBaseline=()=>({status:'ready',plan:{nextItem:f.item}});__matchFocus.render();},fixture);
+  await page.evaluate(f=>{window.__optimizerResult=()=>({status:'stale'});window.__realBaseline=BuildPlans.getBaseline;BuildPlans.getBaseline=()=>({status:'ready',plan:{nextItem:f.item}});__matchFocus.render();},fixture);
   assert.equal(await page.locator('.mf-primary').count(),0,'stale optimizer cannot fall back to saved plan');
   await page.evaluate(()=>{window.__optimizerResult=()=>({status:'patch-review-required'});__matchFocus.render();});
   assert.equal(await page.locator('.mf-primary').count(),0,'patch gate cannot fall back to saved plan');
@@ -37,7 +38,12 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   assert.equal(await page.locator('#match-focus button[data-scan]:visible,#quick-scan:visible').count(),1,'one live camera action');
   await page.evaluate(()=>{const original=Date.now;Date.now=()=>original()+181000;__matchFocus.render();__matchFocus.readUpdate();});
   assert.equal(await page.locator('.mf-primary').count(),0);assert.match(await page.evaluate(()=>__said.at(-1)),/new scoreboard photo/);
-  assert.deepEqual(errors,[]);console.log('ok: stale/patch gates, fresh advice, stale speech and one live camera action');
+  await page.evaluate(()=>BuildPlans.getBaseline=__realBaseline);
+  for(let i=0;i<2;i++){
+   await page.evaluate(()=>{document.querySelector('#objectives [data-time]').value='9:59';});page.once('dialog',d=>d.accept());await page.evaluate(()=>document.querySelector('#match-clear').click());
+   await page.waitForFunction(()=>document.querySelector('#objectives [data-time]').value==='');
+  }
+  assert.deepEqual(errors,[]);console.log('ok: stable controls, advancing and focused timers, session input reset, stale/patch gates, fresh speech and camera action');
  }finally{await browser?.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
