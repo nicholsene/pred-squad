@@ -101,25 +101,56 @@
   const out=new Map(),ctx=source.getContext('2d');
   for(const side of['ours','theirs'])for(let row=0;row<5;row++){
    const group=cells.filter(c=>c.side===side&&c.row===row&&['k','d','a'].includes(c.field));if(group.length!==3)continue;
-   const unit=group[0].h/.27,x=Math.max(0,Math.floor(Math.min(...group.map(c=>c.x))-.18*unit)),y=Math.max(0,Math.floor(group[0].y)),right=Math.min(source.width,Math.ceil(Math.max(...group.map(c=>c.x+c.w))+.18*unit)),bottom=Math.min(source.height,Math.ceil(group[0].y+group[0].h)),w=right-x,h=bottom-y;if(!(w>0&&h>0))continue;
+   // Hero labels locate the panel, not the numeral baseline. Perspective can put
+   // the actual digits outside their nominal boxes; search a bounded panel first.
+   const expected=group.find(c=>c.field==='d'),unit=expected.h/.27,cx=expected.x+expected.w/2,cy=expected.y+.18*unit;
+   const x=Math.max(0,Math.floor(cx-.8*unit)),y=Math.max(0,Math.floor(cy-.4*unit)),right=Math.min(source.width,Math.ceil(cx+.8*unit)),bottom=Math.min(source.height,Math.ceil(cy+.4*unit)),w=right-x,h=bottom-y;if(!(unit>0&&w>0&&h>0))continue;
    const data=ctx.getImageData(x,y,w,h).data,seen=new Uint8Array(w*h),shapes=[];
    for(let start=0;start<w*h;start++){if(seen[start]||Math.min(data[start*4],data[start*4+1],data[start*4+2])<150)continue;
     const todo=[start];seen[start]=1;let x0=w,y0=h,x1=0,y1=0,n=0;
     while(todo.length){const p=todo.pop(),px=p%w,py=Math.floor(p/w);x0=Math.min(x0,px);x1=Math.max(x1,px);y0=Math.min(y0,py);y1=Math.max(y1,py);n++;
      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const xx=px+dx,yy=py+dy;if(xx<0||yy<0||xx>=w||yy>=h)continue;const q=yy*w+xx;if(!seen[q]&&Math.min(data[q*4],data[q*4+1],data[q*4+2])>=150){seen[q]=1;todo.push(q);}}}
     const bw=x1-x0+1,bh=y1-y0+1;
-    if(n>=4&&bh>=unit*.07&&bh<=unit*.24&&bw<=unit*.3&&x0>0&&y0>0&&x1<w-1&&y1<h-1)shapes.push({x:x+x0,y:y+y0,w:bw,h:bh});
+    if(n>=4&&bh>=Math.max(4,unit*.075)&&bh<=unit*.18&&bw<=unit*.28&&x0>0&&y0>0&&x1<w-1&&y1<h-1)shapes.push({x:x+x0,y:y+y0,w:bw,h:bh});
    }
-   shapes.sort((a,b)=>a.x-b.x);if(shapes.length<3||shapes.length>8)continue;
-   const gaps=shapes.slice(1).map((s,i)=>({i:i+1,gap:s.x-shapes[i].x-shapes[i].w})).sort((a,b)=>b.gap-a.gap).slice(0,2);
-   if(gaps.length!==2||gaps.some(g=>g.gap<unit*.045))continue;const [a,b]=gaps.map(g=>g.i).sort((a,b)=>a-b),parts=[shapes.slice(0,a),shapes.slice(a,b),shapes.slice(b)];
-   const bounds=parts.map(ps=>{const left=Math.min(...ps.map(s=>s.x)),top=Math.min(...ps.map(s=>s.y));return{x:left-2,y:top-2,w:Math.max(...ps.map(s=>s.x+s.w))-left+4,h:Math.max(...ps.map(s=>s.y+s.h))-top+4};});
-   const center=b=>b.x+b.w/2,expected=group.find(c=>c.field==='d');if(bounds.some(b=>b.w>unit*.32)||bounds.some((b,i)=>i&&(center(b)-center(bounds[i-1])<unit*.14||center(b)-center(bounds[i-1])>unit*.34))||center(bounds[2])-center(bounds[0])>unit*.62||Math.abs(center(bounds[1])-(expected.x+expected.w/2))>unit*.18)continue;
-   ['k','d','a'].forEach((field,i)=>out.set(side+':'+row+':'+field,bounds[i]));
+   const center=b=>b.x+b.w/2,middle=b=>b.y+b.h/2,candidates=new Map();
+   for(const base of shapes){
+    const mid=middle(base);if(Math.abs(mid-cy)>unit*.28)continue;
+    const band=shapes.filter(b=>Math.abs(middle(b)-mid)<unit*.055&&Math.max(base.h,b.h)<=Math.min(base.h,b.h)*1.5).sort((a,b)=>a.x-b.x),parts=[];
+    for(const b of band){const last=parts.at(-1);if(last&&b.x-Math.max(...last.map(q=>q.x+q.w))<unit*.065)last.push(b);else parts.push([b]);}
+    for(let start=0;start+2<parts.length;start++){
+     const bounds=parts.slice(start,start+3).map(ps=>{const left=Math.min(...ps.map(s=>s.x)),top=Math.min(...ps.map(s=>s.y));return{x:left,y:top,w:Math.max(...ps.map(s=>s.x+s.w))-left,h:Math.max(...ps.map(s=>s.y+s.h))-top};});
+     const gaps=[center(bounds[1])-center(bounds[0]),center(bounds[2])-center(bounds[1])],heights=bounds.map(b=>b.h);
+     if(bounds.some(b=>b.w>unit*.28||Math.abs(middle(b)-mid)>unit*.065)||Math.max(...heights)>Math.min(...heights)*1.5||gaps.some(g=>g<=unit*.16||g>=unit*.34)||Math.abs(gaps[0]-gaps[1])>(gaps[0]+gaps[1])*.125||Math.abs(center(bounds[1])-cx)>unit*.35)continue;
+     candidates.set(JSON.stringify(bounds),bounds);
+    }
+   }
+   // A second plausible triplet can be the header or an icon fragment. Abstain.
+   if(candidates.size!==1)continue;
+   const bounds=[...candidates.values()][0];
+   ['k','d','a'].forEach((field,i)=>{const b=bounds[i];out.set(side+':'+row+':'+field,{x:b.x-2,y:b.y-2,w:b.w+4,h:b.h+4});});
   }
   return out;
  }
- function atlas(source,cells){
+ function digits(source,cells,{image=source}={}){
+  const out=[],ratioX=(image.naturalWidth||image.width)/source.width,ratioY=(image.naturalHeight||image.height)/source.height;
+  for(const[id,rect]of statCrops(source,cells)){
+   const x=Math.max(0,rect.x),y=Math.max(0,rect.y),w=Math.min(source.width-x,rect.w),h=Math.min(source.height-y,rect.h),scale=4,border=8;
+   if(!(w>0&&h>0&&ratioX>0&&ratioY>0))continue;
+   const canvas=document.createElement('canvas');canvas.width=Math.ceil(w*scale)+border*2;canvas.height=Math.ceil(h*scale)+border*2;const g=canvas.getContext('2d',{willReadFrequently:true});g.fillStyle='#fff';g.fillRect(0,0,canvas.width,canvas.height);
+   g.drawImage(image,x*ratioX,y*ratioY,w*ratioX,h*ratioY,border,border,w*scale,h*scale);
+   const patch=g.getImageData(border,border,Math.ceil(w*scale),Math.ceil(h*scale)),data=patch.data,hist=new Uint32Array(256),gray=new Uint8Array(data.length/4);
+   for(let i=0;i<gray.length;i++){const v=Math.round(data[i*4]*.299+data[i*4+1]*.587+data[i*4+2]*.114);gray[i]=v;hist[v]++;}
+   let total=0;for(let i=0;i<256;i++)total+=i*hist[i];let weight=0,sum=0,best=-1,threshold=0;
+   for(let i=0;i<256;i++){weight+=hist[i];sum+=i*hist[i];if(!weight||weight===gray.length)continue;const delta=sum/weight-(total-sum)/(gray.length-weight),variance=weight*(gray.length-weight)*delta*delta;if(variance>best){best=variance;threshold=i;}}
+   for(let i=0;i<gray.length;i++){const v=gray[i]>threshold?0:255;data[i*4]=data[i*4+1]=data[i*4+2]=v;data[i*4+3]=255;}g.putImageData(patch,border,border);
+   out.push({id,canvas,x,y,scale,border});
+  }
+  return out;
+ }
+ function atlas(source,cells,{image=source}={}){
+  const ratioX=(image.naturalWidth||image.width)/source.width,ratioY=(image.naturalHeight||image.height)/source.height;
+  if(!(ratioX>0&&ratioY>0&&Number.isFinite(ratioX)&&Number.isFinite(ratioY)))throw Error('Photo detail source is unavailable.');
   const widths={hero:300,name:340,lvl:96,k:96,d:96,a:96,cs:144},fields=['hero','name','lvl','k','d','a','cs'],gap=20,rowH=90;
   const x={},width=fields.reduce((sum,f)=>{x[f]=sum;return sum+widths[f]+gap;},gap);
   const canvas=document.createElement('canvas');canvas.width=width;canvas.height=10*rowH+gap;const g=canvas.getContext('2d');g.fillStyle='#181b21';g.fillRect(0,0,canvas.width,canvas.height);
@@ -127,10 +158,10 @@
   for(let cell of cells){if(['k','d','a'].includes(cell.field)){const crop=stats.get(cell.id);if(!crop)continue;cell={...cell,...crop};}if(!widths[cell.field]||cell.w<=0||cell.h<=0)continue;const bx=x[cell.field],by=gap+(cell.side==='ours'?0:5)*rowH+cell.row*rowH,bw=widths[cell.field],bh=rowH-gap;
    const sx=Math.max(0,cell.x),sy=Math.max(0,cell.y),sw=Math.min(source.width-sx,cell.w),sh=Math.min(source.height-sy,cell.h);if(!(sw>0&&sh>0))continue;
    const scale=Math.min((bw-10)/sw,(bh-8)/sh,5),dw=sw*scale,dh=sh*scale,dx=bx+(bw-dw)/2,dy=by+(bh-dh)/2;
-   g.drawImage(source,sx,sy,sw,sh,dx,dy,dw,dh);regions.push({cell,sx,sy,scale,dx,dy,dw,dh});
+   g.drawImage(image,sx*ratioX,sy*ratioY,sw*ratioX,sh*ratioY,dx,dy,dw,dh);regions.push({cell,sx,sy,scale,dx,dy,dw,dh});
   }
   return{canvas,reads(result){const out={};for(const r of regions){const items=(result.items||[]).filter(item=>item.poly.every(([px,py])=>px>=r.dx-3&&px<=r.dx+r.dw+3&&py>=r.dy-3&&py<=r.dy+r.dh+3)).map(item=>({...item,sourcePoly:item.poly.map(([px,py])=>[r.sx+(px-r.dx)/r.scale,r.sy+(py-r.dy)/r.scale])}));out[r.cell.id]={items};}return out;}};
  }
- root.FreeOCR={read,cancel,atlas};
+ root.FreeOCR={read,cancel,atlas,digits};
 })(window);
 

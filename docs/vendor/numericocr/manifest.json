@@ -1,0 +1,16 @@
+{
+  "engine": "tesseract.js@7.0.0",
+  "core": "tesseract.js-core@7.0.0",
+  "model": "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int/eng.traineddata.gz",
+  "modelSha256": "5dc5d8d640a212c9d6184921ba103b186f50e0fed9ee716c53e6b312b400d747",
+  "assets": {
+    "worker.js.gz": {
+      "bytes": 1494495,
+      "sha256": "6b81af423edad2caaf1c03f329caf03cd2a08b4cff3be9d86c3a9728c1520516"
+    },
+    "eng.traineddata.gz": {
+      "bytes": 2937634,
+      "sha256": "c39c5d293724da0c3f94dd527c2304418a46a051dff8e9855e308abcc6b35e65"
+    }
+  }
+}

@@ -46,5 +46,6 @@ jobs:
       - run: node tests/test_scan_archive.cjs
       - run: node tests/test_match_advice.cjs
       - run: node tests/test_free_ocr.cjs
+      - run: node tests/test_numeric_ocr.cjs
       - run: node tests/test_match_layout.cjs
       - run: node tests/test_camera.cjs

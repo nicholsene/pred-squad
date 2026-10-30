@@ -60,3 +60,15 @@ console.log('FreeScan: observed loading roles and contradictory farm reads are c
  assert.equal(F.loading({...read,items:wrong},{heroes,squad}),null);
 }
 console.log('FreeScan: loading crop proposals require measured roles and anchors; identity remains exact');
+
+{
+ const read=fixture();read.items=read.items.filter(it=>it.text!=='NEON');const p=F.prepareBoard(read,{heroes,squad});
+ const observed={text:'NEON',score:.99,poly:[[10,10],[42,10],[42,22],[10,22]],sourcePoly:[[280,300],[312,300],[312,312],[280,312]]};
+ const repaired=F.applyCells(p,{'ours:1:hero':{items:[observed]}},{withGeometry:true});assert(repaired.result.readConfidence.layout.resolved);assert(repaired.geometry.rows.ours[1].measured);assert(!p.geometry.rows.ours[1].measured);
+ const poly=[[5,5],[15,5],[15,15],[5,15]],sourcePoly=[[500,300],[510,300],[510,310],[500,310]];
+ const next=F.applyCells(repaired,{'ours:1:k':{items:[{text:'7',score:.96,poly,sourcePoly,engine:'tesseract'}]}});
+ assert(next.readConfidence.layout.resolved,'numeric retry retains measured hero repairs');assert.equal(next.ours[1].k,7);assert.equal(next.ours[1].readConfidence.k.source,'tesseract-cell');assert.deepEqual(next.ours[1].readConfidence.k.boxes,[sourcePoly]);
+ const conflict=F.applyCells({...repaired,result:next},{'ours:1:k':{items:[{text:'1',score:.99,poly,sourcePoly,engine:'tesseract'}]}});
+ assert(conflict.ours[1].readConfidence.k.disputed);assert.equal(Q.automaticBoard(conflict,{heroes,squad}).result.ours[1].k,null);
+}
+console.log('FreeScan: numeric retries retain measured geometry, actual evidence polygons and unresolved conflicts');

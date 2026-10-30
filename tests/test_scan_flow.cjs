@@ -21,6 +21,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  await page.reload();await page.waitForFunction(()=>window.__matchFocus);await page.locator('[data-go="match"]').click();
  const png=Buffer.from(await page.evaluate(()=>{const c=document.createElement("canvas");c.width=c.height=4;return c.toDataURL().split(",")[1];}),"base64");
  const install=async(mode="auto")=>page.evaluate(({heroes,mode})=>{
+   window.__realAtlas ||= window.FreeOCR.atlas;
    window.PhotoRouter.classify=lines=>{window.__routedSameLines=lines===window.__lastRead?.lines;return{kind:"scoreboard",clockRead:{seconds:590}};};
    
    const result={sourceLayout:"live",ours:heroes.slice(0,5).map((hero,i)=>({hero,lvl:12,k:2,d:3,a:4,cs:100+i,gold:null,items:["Unknown"]})),theirs:heroes.slice(5).map((hero,i)=>({hero,lvl:13,k:4,d:1,a:2,cs:80+i,gold:null})),issues:[]};
@@ -53,6 +54,19 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  assert(await page.evaluate(()=>window.__said.length>0),"reading and accepted update can use speech");
  assert.equal(await page.evaluate(()=>window.__ocrCalls),1,"routing and parsing share one OCR result");
  assert(await page.evaluate(()=>window.__routedSameLines&&window.__parsedSameRead),"router and parser receive the same read");
+ // The optional number pass must never discard a valid main-reader board.
+ for(const failure of ['crop','reader']){
+   const previous=await page.evaluate(()=>JSON.parse(localStorage.getItem('squad-match')).board.scanId);await install();
+   await page.evaluate(failure=>{
+     const prepare=FreeScan.prepareBoard;FreeScan.prepareBoard=read=>({...prepare(read),cells:[{id:'ours:0:k'}]});
+     FreeScan.applyCells=(p,reads,options)=>options?.withGeometry?{...p,result:p.result}:p.result;
+     FreeOCR.atlas=()=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=20;return{canvas,reads:()=>({})};};
+     FreeOCR.digits=()=>{if(failure==='crop')throw Error('Crop allocation failed');return[];};
+     window.__realNumberRead ||= NumericOCR.read;NumericOCR.read=async()=>{throw Error('Number reader unavailable');};
+   },failure);
+   await upload();await page.waitForFunction(id=>JSON.parse(localStorage.getItem('squad-match')).board.scanId!==id,previous);assert.equal(await page.locator('#scan-review').isHidden(),true);
+ }
+ await page.evaluate(()=>NumericOCR.read=__realNumberRead);
  await page.locator("#me").selectOption("");assert.equal(await page.locator(".mf-lane.mine").count(),0,"unassigned identity must not highlight any lane as yours");await page.locator("#me").selectOption(fixture.who);
  // An uncertain screen is verified by the scoreboard reader without asking for its type.
  await install("partial");await page.evaluate(()=>PhotoRouter.classify=()=>({kind:"unknown"}));await upload();
@@ -70,6 +84,44 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  await page.evaluate(()=>PhotoRouter.classify=()=>({kind:"minimap"}));await upload();
  await page.waitForFunction(()=>document.querySelector("#mf-age")?.textContent.includes("HUD recognized"));
  assert.equal(await page.locator("#map-review").isHidden(),true);
+ // Detail crops sample original pixels; all evidence stays in overview coordinates.
+ const detailPNG=Buffer.from(await page.evaluate(()=>{const c=document.createElement('canvas');c.width=4097;c.height=2305;c.getContext('2d').fillRect(0,0,c.width,c.height);return c.toDataURL('image/png').split(',')[1];}),'base64');
+ await install('deferred');
+ await page.evaluate(()=>{
+   const prepare=FreeScan.prepareBoard;
+   FreeScan.prepareBoard=read=>{const p=prepare(read);p.result.readConfidence.layout.resolved=false;p.cells=[{id:'ours:0:hero',side:'ours',row:0,field:'hero',x:10,y:10,w:40,h:20}];return p;};
+   FreeScan.applyCells=(p,reads,options)=>options?.withGeometry?{...p,result:p.result}:p.result;
+   FreeOCR.atlas=(overview,cells,options)=>{
+     window.__detailFrame=options?.image;window.__detailAtlas={overview:[overview.width,overview.height],original:[options.image.width,options.image.height],draws:[]};
+     const original=CanvasRenderingContext2D.prototype.drawImage;
+     CanvasRenderingContext2D.prototype.drawImage=function(...args){if(args[0]===options.image)__detailAtlas.draws.push(args.slice(1));return original.apply(this,args);};
+     let sheet;try{sheet=__realAtlas(overview,cells,options);}finally{CanvasRenderingContext2D.prototype.drawImage=original;}
+     __detailAtlas.sourcePoly=sheet.reads({items:[{text:'HERO',score:.99,poly:[[108,24],[232,24],[232,86],[108,86]]}]})['ours:0:hero'].items[0].sourcePoly;return sheet;
+   };
+ });
+ await page.locator('#auto-photo-file').setInputFiles({name:'detail.png',mimeType:'image/png',buffer:detailPNG});await page.waitForFunction(()=>__ocrJobs.length===1);await page.evaluate(()=>__ocrJobs[0].finish());await page.waitForFunction(()=>__ocrJobs.length===2);
+ const detail=await page.evaluate(()=>__detailAtlas);assert.deepEqual(detail.overview,[2048,1152]);assert.deepEqual(detail.original,[4097,2305]);assert.equal(detail.draws.length,1);
+ const [sx,sy,sw,sh]=detail.draws[0];assert(Math.abs(sx-10*4097/2048)<1e-8);assert(Math.abs(sy-10*2305/1152)<1e-8);assert(Math.abs(sw-40*4097/2048)<1e-8);assert(Math.abs(sh-20*2305/1152)<1e-8);
+ assert.deepEqual(detail.sourcePoly,[[10,10],[50,10],[50,30],[10,30]]);await page.evaluate(()=>__ocrJobs[1].finish());await page.waitForFunction(()=>document.querySelector('#scan-progress').hidden);await page.waitForFunction(()=>__detailFrame.width===0);
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('squad-match')).board.scanId),accepted);
+ // A decoder resolving after cancellation must close its bitmap, never attach it.
+ await install('deferred');await page.evaluate(()=>{const create=window.createImageBitmap.bind(window);window.__originalCreateBitmap=create;let first=true;window.createImageBitmap=(...args)=>{if(!first)return create(...args);first=false;return new Promise(resolve=>window.__releasePhotoDecode=()=>create(...args).then(bitmap=>{window.__latePhotoBitmap=bitmap;resolve(bitmap);}));};});
+ await upload();await page.waitForFunction(()=>typeof __releasePhotoDecode==='function');await page.locator('#scan-progress button').click();await upload();await page.waitForFunction(()=>__ocrJobs.length===1);await page.evaluate(()=>__releasePhotoDecode());await page.waitForFunction(()=>__latePhotoBitmap?.width===0);
+ assert.equal(await page.evaluate(()=>__ocrJobs.length),1);await page.locator('#scan-progress button').click();await page.evaluate(()=>{__ocrJobs[0].finish();window.createImageBitmap=__originalCreateBitmap;});
+ // HTML-image fallback releases its retained source and event handlers after scanning.
+ await install('empty');await page.evaluate(()=>{window.__originalImage=window.Image;window.Image=function(...args){const img=new __originalImage(...args);window.__fallbackPhoto=img;return img;};window.createImageBitmap=async()=>{throw Error('Decoder unavailable');};});
+ await page.locator('#auto-photo-file').setInputFiles({name:'fallback.png',mimeType:'image/png',buffer:detailPNG});await page.waitForFunction(()=>__ocrDone&&document.querySelector('#scan-progress').hidden);assert(await page.evaluate(()=>__fallbackPhoto.getAttribute('src')===''&&__fallbackPhoto.onload===null&&__fallbackPhoto.onerror===null));
+ await page.evaluate(()=>{window.Image=__originalImage;window.createImageBitmap=__originalCreateBitmap;});
+ // Oversized originals are released before OCR; only the bounded overview remains.
+ const widePNG=Buffer.from(await page.evaluate(()=>{const c=document.createElement('canvas');c.width=6001;c.height=2;return c.toDataURL('image/png').split(',')[1];}),'base64');
+ await install('deferred');await page.evaluate(()=>{window.createImageBitmap=async(...args)=>{const bitmap=await __originalCreateBitmap(...args);window.__oversizeBitmap=bitmap;return bitmap;};const read=FreeOCR.read;FreeOCR.read=(image,options)=>{window.__oversizeDetail=image._detailImage||null;return read(image,options);};});
+ await page.locator('#auto-photo-file').setInputFiles({name:'oversize.png',mimeType:'image/png',buffer:widePNG});await page.waitForFunction(()=>__ocrJobs.length===1);assert.equal(await page.evaluate(()=>__oversizeDetail),null);assert.equal(await page.evaluate(()=>__oversizeBitmap.width),0);await page.locator('#scan-progress button').click();await page.evaluate(()=>{__ocrJobs[0].finish();window.createImageBitmap=__originalCreateBitmap;});
+ // Camera callers can release their frame immediately after the capture callback.
+ await install('deferred');await page.evaluate(()=>{
+   window.__originalCameraOpen=CameraScan.open;CameraScan.open=(kind,capture)=>{const c=document.createElement('canvas');c.width=4097;c.height=2305;c._captureSource='camera';c._capturedAt=Date.now();window.__callerCamera=c;capture('auto',c);c.width=c.height=0;};
+   const read=FreeOCR.read;FreeOCR.read=(image,options)=>{window.__cameraDetail=image._detailImage;return read(image,options);};document.querySelector('#camera-open').click();
+ });await page.waitForFunction(()=>__ocrJobs.length===1);assert.equal(await page.evaluate(()=>__callerCamera.width),0);assert.deepEqual(await page.evaluate(()=>[__cameraDetail.width,__cameraDetail.height]),[4097,2305]);
+ await page.locator('#scan-progress button').click();assert.equal(await page.evaluate(()=>__cameraDetail.width),0);await page.evaluate(()=>{__ocrJobs[0].finish();CameraScan.open=__originalCameraOpen;});
  // The selected image stays visible while reading; cancellation owns its URL and signal.
  const largePNG=Buffer.from(await page.evaluate(()=>{const c=document.createElement('canvas');c.width=4096;c.height=2304;return c.toDataURL('image/png').split(',')[1];}),'base64');
  const uploadLarge=()=>page.locator('#auto-photo-file').setInputFiles({name:'large-board.png',mimeType:'image/png',buffer:largePNG});
@@ -149,7 +201,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  await page.evaluate(()=>window.__roomACK=null);await upload();await page.waitForFunction(()=>typeof window.__roomACK==="function");
  const rejected=await page.evaluate(()=>window.__said.length);await page.evaluate(()=>window.__roomACK(true));await page.waitForTimeout(100);
  assert.equal(await page.evaluate(()=>window.__said.length),rejected);
- assert.deepEqual(errors,[]);console.log("ok: shared free OCR result, thumbnail/cancel/replacement cleanup, bounded image size, automatic numeric apply, unknown inventories, upload age, stale-session rejection, shop candidates and server-ACK/conflict speech");
+ assert.deepEqual(errors,[]);console.log("ok: shared OCR, original-detail crops, camera ownership, fallback/decode cleanup, cancellation, bounded memory, automatic numeric apply, unknown inventories, stale-session and server-ACK guards");
  await context.close();
  }finally{await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

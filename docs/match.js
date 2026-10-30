@@ -219,17 +219,30 @@
   }
   let activePhoto=null;
   const photoAbort=()=>new DOMException("Photo scan cancelled.","AbortError");
+  const detailAllowed=(w,h)=>w>0&&h>0&&w*h<=16777216&&Math.max(w,h)<=6000;
+  function ownedPhotoSource(image,release){
+    let disposed=false;
+    return{image,dispose(){if(disposed)return;disposed=true;release();}};
+  }
+  function snapshotCameraSource(source){
+    const w=source.width,h=source.height;if(!(w>0&&h>0))throw Error("Camera frame dimensions are invalid.");
+    const scale=detailAllowed(w,h)?1:Math.min(1,2048/w,2048/h),canvas=document.createElement("canvas");
+    try{canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));canvas.getContext("2d").drawImage(source,0,0,canvas.width,canvas.height);return ownedPhotoSource(canvas,()=>{canvas.width=canvas.height=0;});}
+    catch(e){canvas.width=canvas.height=0;throw e;}
+  }
+  function releasePhotoSource(job,key){const source=job[key];job[key]=null;source?.dispose();}
   function requirePhoto(job){if(activePhoto!==job||job.controller.signal.aborted)throw photoAbort();requireScan(job.ticket);}
   function finishPhoto(job){
     if(!job.released){job.released=true;archive?.release();}
+    releasePhotoSource(job,"cameraSource");releasePhotoSource(job,"detailSource");
     if(job.url){job.preview.removeAttribute("src");URL.revokeObjectURL(job.url);job.url=null;}
-    if(job.image){job.image.width=job.image.height=0;job.image=null;}
+    if(job.image){delete job.image._detailImage;job.image.width=job.image.height=0;job.image=null;}
     if(activePhoto!==job)return;
     activePhoto=null;scanBusy=false;hideScanProgress();
     const box=$("#scan-progress");box.classList.remove("photo-scan-progress");box.innerHTML='<div class="bar-meter"><i></i></div><span class="muted"></span>';
   }
   function cancelPhoto(message="Photo scan cancelled.",quiet=false){
-    const job=activePhoto;if(!job)return;void archive?.update(job.ticket.archiveId,{outcome:'cancelled'});job.ticket.cancelled=true;job.controller.abort();window.FreeOCR?.cancel();finishPhoto(job);if(!quiet)matchFocus?.scanFeedback(message);
+    const job=activePhoto;if(!job)return;void archive?.update(job.ticket.archiveId,{outcome:'cancelled'});job.ticket.cancelled=true;job.controller.abort();window.FreeOCR?.cancel();window.NumericOCR?.cancel();finishPhoto(job);if(!quiet)matchFocus?.scanFeedback(message);
   }
   function photoProgress(job,message,fraction){
     if(activePhoto!==job||job.controller.signal.aborted)return;
@@ -238,8 +251,10 @@
   }
   function beginPhoto(file){
     if(scanBusy&&!activePhoto){toast("Wait for the current scan to finish.");return null;}cancelPhoto("",true);
-    const job={ticket:scanTicket(file),controller:new AbortController(),url:null,image:null};
+    const job={ticket:scanTicket(file),controller:new AbortController(),url:null,image:null,cameraSource:null,detailSource:null,sourceError:null};
     archive?.hold();file._archiveId=archive?.capture(file,{sessionId:job.ticket.sessionId,player:me,patch:A.itemPatch,engine:'paddleocr-js@0.4.2/PP-OCRv6_tiny',source:file._captureSource||'upload',observedAt:file._capturedAt,observedAtEstimated:file._captureSource!=='camera'});job.ticket.archiveId=file._archiveId;
+    // Own the camera pixels before the first await; callers can release their canvas.
+    if(!(file instanceof Blob)){job.originalDimensions={width:file.width,height:file.height};try{job.cameraSource=snapshotCameraSource(file);}catch(e){job.sourceError=e;}}
     const box=$("#scan-progress");box.innerHTML='<img class="photo-scan-preview" alt="Selected game photo"><div><span class="photo-scan-message" role="status">Opening photo…</span><small class="photo-save-notice">'+(archive?.status().enabled?'Photo queued for private scanner review':'Photo saving paused')+'</small><div class="bar-meter"><i></i></div></div><button type="button" class="chip">Cancel</button>';
     job.preview=box.querySelector("img");job.message=box.querySelector("span");job.bar=box.querySelector("i");
     if(file instanceof Blob){job.url=URL.createObjectURL(file);job.preview.src=job.url;}
@@ -247,17 +262,26 @@
     box.querySelector("button").onclick=()=>cancelPhoto();activePhoto=job;scanBusy=true;box.classList.add("photo-scan-progress");box.hidden=false;$("#board-progress").hidden=true;return job;
   }
   async function decodePhoto(file,job){
-    const signal=job.controller.signal;let source=file,bitmap=null,fallback=null;
-    const check=()=>{if(signal.aborted)throw photoAbort();};check();
+    const signal=job.controller.signal;let owner=job.cameraSource,source=owner?.image||file,canvas=null,returned=false;job.cameraSource=null;
+    const check=()=>{if(signal.aborted)throw photoAbort();requirePhoto(job);};
     try{
+      check();if(job.sourceError)throw job.sourceError;
       if(file instanceof Blob){
-        if(window.createImageBitmap){try{bitmap=await createImageBitmap(file,{imageOrientation:"from-image"});source=bitmap;}catch{check();}}
+        if(window.createImageBitmap){try{const bitmap=await createImageBitmap(file,{imageOrientation:"from-image"});owner=ownedPhotoSource(bitmap,()=>bitmap.close());source=bitmap;}catch{check();}}
         check();
-        if(!bitmap){fallback=await new Promise((resolve,reject)=>{const img=new Image(),timer=setTimeout(()=>stop(new Error("Could not open this photo. Try a JPEG or PNG.")),15000),clear=()=>{clearTimeout(timer);img.onload=img.onerror=null;signal.removeEventListener("abort",abort);},stop=error=>{clear();img.src="";reject(error);},abort=()=>stop(photoAbort());img.onload=()=>{clear();resolve(img);};img.onerror=()=>stop(new Error("Could not open this photo. Try a JPEG or PNG."));signal.addEventListener("abort",abort,{once:true});img.src=job.url;});source=fallback;}
+        if(!owner){const image=await new Promise((resolve,reject)=>{
+          const img=new Image();let settled=false;
+          const clear=()=>{clearTimeout(timer);img.onload=img.onerror=null;signal.removeEventListener("abort",abort);};
+          const stop=error=>{if(settled)return;settled=true;clear();img.src="";reject(error);},abort=()=>stop(photoAbort());
+          const timer=setTimeout(()=>stop(new Error("Could not open this photo. Try a JPEG or PNG.")),15000);
+          img.onload=()=>{if(settled)return;settled=true;clear();resolve(img);};img.onerror=()=>stop(new Error("Could not open this photo. Try a JPEG or PNG."));signal.addEventListener("abort",abort,{once:true});img.src=job.url;
+        });owner=ownedPhotoSource(image,()=>{image.src="";});source=image;check();}
       }
       check();const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;if(!(w>0&&h>0))throw new Error("Photo dimensions are invalid.");
-      const scale=Math.min(1,2048/w,2048/h),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));canvas.getContext("2d").drawImage(source,0,0,canvas.width,canvas.height);photoTime.copy(file,canvas);canvas._archiveId=file._archiveId;return canvas;
-    }finally{bitmap?.close();if(fallback)fallback.src="";}
+      job.originalDimensions||={width:w,height:h};const scale=Math.min(1,2048/w,2048/h);canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));canvas.getContext("2d").drawImage(source,0,0,canvas.width,canvas.height);photoTime.copy(file,canvas);canvas._archiveId=file._archiveId;check();
+      if(owner&&detailAllowed(w,h)&&(w>canvas.width||h>canvas.height)){canvas._detailImage=owner.image;job.detailSource=owner;owner=null;}
+      returned=true;return canvas;
+    }finally{owner?.dispose();if(!returned&&canvas)canvas.width=canvas.height=0;}
   }
   function scanProgress(id,message,fraction){
     if(activePhoto){photoProgress(activePhoto,message,fraction);return;}
@@ -287,7 +311,7 @@
         res=window.FreeScan.loading?.(ocr,context);
         const cells=!res?window.FreeScan.loadingCells?.(ocr,context):[];
         if(cells?.length){
-          const sheet=window.FreeOCR.atlas(file,cells);
+          const sheet=window.FreeOCR.atlas(file,cells,{image:file._detailImage||file});
           try{
             const enlarged=await window.FreeOCR.read(sheet.canvas,{signal,onProgress:(m,f)=>scanProgress("#scan-progress",m.startsWith("Reading")?"Reading enlarged hero and player labels…":m,f)});guard();
             const mapped=Object.values(sheet.reads(enlarged)).flatMap(r=>r.items.filter(i=>i.sourcePoly).map(i=>({...i,poly:i.sourcePoly})));
@@ -360,12 +384,22 @@
     try{
       let res;
       if(ocr){
-        const prepared=window.FreeScan.prepareBoard(ocr,{heroes:A.heroes,squad:A.squad.players});
+        let prepared=window.FreeScan.prepareBoard(ocr,{heroes:A.heroes,squad:A.squad.players});
         if(prepared.cells?.length){
-          const sheet=window.FreeOCR.atlas(file,prepared.cells);
-          try{const enlarged=await window.FreeOCR.read(sheet.canvas,{signal,onProgress:(m,f)=>scanProgress("#board-progress",m.startsWith("Reading")?"Reading enlarged player stats…":m,f)});guard();res=window.FreeScan.applyCells(prepared,sheet.reads(enlarged));}
+          const sheet=window.FreeOCR.atlas(file,prepared.cells,{image:file._detailImage||file});
+          try{const enlarged=await window.FreeOCR.read(sheet.canvas,{signal,onProgress:(m,f)=>scanProgress("#board-progress",m.startsWith("Reading")?"Reading enlarged player stats…":m,f)});guard();const repaired=window.FreeScan.applyCells(prepared,sheet.reads(enlarged),{withGeometry:true});prepared=repaired;res=repaired.result;}
           finally{sheet.canvas.width=sheet.canvas.height=0;}
         }else res=prepared.result;
+        if(prepared.cells?.length&&window.NumericOCR&&window.FreeOCR.digits){
+          let crops=[];
+          try{
+            crops=window.FreeOCR.digits(file,prepared.cells,{image:file._detailImage||file});
+            const numbers=await window.NumericOCR.read(crops,{signal,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});guard();
+            archiveUpdate(file,{numericRetry:numbers});
+            res=window.FreeScan.applyCells(prepared,numbers);
+          }catch(e){if(signal?.aborted)throw e;guard();archiveUpdate(file,{numericRetryError:String(e.message||e)});}
+          finally{crops.forEach(c=>{c.canvas.width=c.canvas.height=0;});}
+        }
       }else{
         await loadScoreboard();
         res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
@@ -410,7 +444,7 @@
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       requirePhoto(job);job.image=await decodePhoto(file,job);requirePhoto(job);
       const ocr=await window.FreeOCR.read(job.image,{signal:job.controller.signal,onProgress:(m,f)=>photoProgress(job,m,f)});
-      archiveUpdate(file,{ocr,imageDimensions:{width:job.image.width,height:job.image.height}});
+      archiveUpdate(file,{ocr,imageDimensions:{width:job.image.width,height:job.image.height},originalDimensions:job.originalDimensions,detailRetained:!!job.detailSource});
       requirePhoto(job);photoProgress(job,"Checking the photo…",.92);
       const detected=forcedKind?{kind:forcedKind}:window.PhotoRouter.classify(ocr.lines,{heroes:A.heroes,items:A.items,width:job.image.width,height:job.image.height,visualMap:window.PhotoRouter.mapColors?.(job.image)===true});
       archiveUpdate(file,{detected,outcome:'read'});
