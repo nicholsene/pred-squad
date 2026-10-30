@@ -3,6 +3,7 @@
 function create({app:A,getState,getMe,planningUI,toast}){
  const esc=A.esc,R=root.SquadEngine.ROLES,roleName=r=>root.SquadEngine.ROLE_LABEL[r]||r,heroName=h=>A.heroes.find(x=>x.slug===h)?.name||h,person=w=>A.squad.players.find(p=>p.key===w)?.label||w,C=new Map(A.items.map(i=>[i.name,i]));
  let scope='squad',mode='RANKED',respect=true,key='',profileKey='',last=null;
+ let cachedProfiles={},profileInputs='',profileMatches=null,profileCatalog=null,profileRevision=0;
  function controls(){return '<div class="optimizer-controls"><div class="optimizer-switch" role="group" aria-label="Optimization scope">'+['solo','squad'].map(s=>'<button type="button" data-opt-scope="'+s+'" aria-pressed="'+(scope===s)+'">'+(s==='solo'?'For me':'For the squad')+'</button>').join('')+'</div><label>Profile history<select id="optimizer-mode" aria-label="Profile history mode"><option value="RANKED" '+(mode==='RANKED'?'selected':'')+'>Ranked</option><option value="STANDARD" '+(mode==='STANDARD'?'selected':'')+'>Standard</option></select></label></div><label class="optimizer-lock"><input id="optimizer-lock" type="checkbox" '+(respect?'checked':'')+'> Keep current planned pivots</label>';}
  function profile(who,profiles){
  const p=profiles[who];if(!p)return '<p class="note">Assign this player a hero and lane to begin a profile.</p>';
@@ -16,12 +17,17 @@ function create({app:A,getState,getMe,planningUI,toast}){
  function render(){
  const S=getState(),board=S.board?.sessionId===S.id?S.board:null,now=Date.now(),fresh=board&&now>=board.at&&now-board.at<=180000,ageMask=['ours','theirs'].map(side=>(board?.[side]||[]).map(r=>{const at=r.inventoryAt??board.at;return now>=at&&now-at<=180000;}));
  const selected=document.querySelector('#plan-player')?.value||getMe()||A.squad.players[0]?.key;
- const contextKey=JSON.stringify([S.setup,S.id,S.clock?.startedAt,mode,selected,A.allMatches.length,A.itemPatch]);
- const profiles={};for(const role of R){const p=S.setup.ours?.[role];if(p?.who&&p.hero)profiles[p.who]=root.SquadProfiles.build({matches:A.allMatches,who:p.who,hero:p.hero,role,patch:A.itemPatch,mode,cutoff:S.clock?.startedAt||board?.at||now,excludeMatchId:typeof S.reviewMatch==='string'?S.reviewMatch:S.reviewMatch?.id,catalog:A.items});}
+ const cutoff=S.clock?.startedAt||board?.at||now,excludeMatchId=typeof S.reviewMatch==='string'?S.reviewMatch:S.reviewMatch?.id;
+ const contextKey=JSON.stringify([S.setup,S.id,cutoff,excludeMatchId,mode,selected,A.allMatches.length,A.itemPatch]);
+ if(profileInputs!==contextKey||profileMatches!==A.allMatches||profileCatalog!==A.items){
+  const profiles={};for(const role of R){const p=S.setup.ours?.[role];if(p?.who&&p.hero)profiles[p.who]=root.SquadProfiles.build({matches:A.allMatches,who:p.who,hero:p.hero,role,patch:A.itemPatch,mode,cutoff,excludeMatchId,catalog:A.items});}
+  cachedProfiles=profiles;profileInputs=contextKey;profileMatches=A.allMatches;profileCatalog=A.items;profileRevision++;profileKey='';
+ }
+ const profiles=cachedProfiles;
  const pe=document.querySelector('#profile-insights');
  if(pe&&profileKey!==contextKey){profileKey=contextKey;const open=pe.querySelector('details')?.open;pe.innerHTML='<details class="profile-insights" '+(open?'open':'')+'><summary>Measured playstyle &amp; build preferences</summary>'+profile(selected,profiles)+'</details>';}
  const el=document.querySelector('#optimizer');if(!el)return;
- const next=JSON.stringify([board,S.setup,S.buildPlans,S.pivotIntents,getMe(),S.id,S.clock?.startedAt,mode,scope,respect,A.patchReview,contextKey,!!fresh,ageMask]);if(key===next)return;key=next;
+ const next=JSON.stringify([board,S.setup,S.buildPlans,S.pivotIntents,getMe(),S.id,S.clock?.startedAt,mode,scope,respect,A.patchReview,contextKey,profileRevision,!!fresh,ageMask]);if(key===next)return;key=next;
  const open=new Set([...el.querySelectorAll('details[open][data-opt-section]')].map(d=>d.dataset.optSection));
  const plan=root.CounterBuild.plan({items:A.items,heroes:A.heroes,matches:A.ctx.matches,setup:S.setup,board,now,patchReview:A.patchReview,buildPlans:S.buildPlans,pivotIntents:S.pivotIntents,patch:A.itemPatch,sessionId:S.id,coordinated:true});
  const result=root.SquadOptimizer.optimize({counterPlan:plan,board,setup:S.setup,catalog:A.items,heroes:A.heroes,now,patch:A.itemPatch,sessionId:S.id,buildPlans:S.buildPlans,pivotIntents:S.pivotIntents,profiles,onlyPlayers:scope==='solo'?[getMe()]:null,respectIntent:respect});

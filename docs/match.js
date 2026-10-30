@@ -527,19 +527,26 @@
     });}
   }
 
+  let trackerKey="";
   function renderLive() {
     const present = ROLES.map(r => (S.setup.ours[r] || {}).who).filter(Boolean);
     const sec = clockSec();
     const next = nextObjective(sec);
     $("#clock").hidden=sec==null;
-    $("#clock").innerHTML = sec == null
-      ? ""
-      : `<div class="clock-big">${fmt(sec)}</div><div class="clock-next">${next ? `${esc(next.label)} in <b>${fmt(next.t - sec)}</b>` : "Record an objective observation below"}</div>
-         <div class="clock-adj"><button class="chip ghost" data-adj="-10">−10s</button><button class="chip ghost" data-adj="10">+10s</button><button class="chip ghost" id="clock-reset">Reset</button></div>`;
+    const clock=$("#clock");
+    if(sec==null){if(clock.childNodes.length)clock.replaceChildren();}
+    else{
+      if(!clock.querySelector('.clock-big'))clock.innerHTML=`<div class="clock-big"></div><div class="clock-next"></div><div class="clock-adj"><button class="chip ghost" data-adj="-10">−10s</button><button class="chip ghost" data-adj="10">+10s</button><button class="chip ghost" id="clock-reset">Reset</button></div>`;
+      const big=clock.querySelector('.clock-big'),hint=clock.querySelector('.clock-next'),text=fmt(sec),html=next?`${esc(next.label)} in <b>${fmt(next.t-sec)}</b>`:"Record an objective observation below";
+      if(big.textContent!==text)big.textContent=text;if(hint.innerHTML!==html)hint.innerHTML=html;
+    }
     const cs = $("#clock-start"); if (cs) cs.onclick = startMatch;
     $("#clock").querySelectorAll("[data-adj]").forEach(b => b.onclick = () => setPath(["clock", "startedAt"], S.clock.startedAt - (+b.dataset.adj) * 1000));
     const cr = $("#clock-reset"); if (cr) cr.onclick = () => { if(confirm("Reset the clock and objective observations?")){draftGameTime="0:00";commit([{path:["clock"],value:{}},{path:["objectives"],value:{}},{path:["stage"],value:"draft"}]);} };
 
+    const nextTrackerKey=JSON.stringify([present,S.live,me,A.T.maxDeaths]);
+    if(trackerKey===nextTrackerKey)return;
+    trackerKey=nextTrackerKey;
     $("#tracker").innerHTML = present.length ? present.map(m => {
       const lv = S.live[m] || {};
       const step = (k, v) => `<div class="stepper"><span>${k === "deaths" ? "Deaths" : "Wards"}</span><button type="button" data-step='${JSON.stringify([m, k, -1])}' aria-label="minus">−</button><b class="${k === "deaths" && v >= A.T.maxDeaths ? "bad" : k === "deaths" && v >= A.T.maxDeaths - 1 ? "warn" : ""}">${v || 0}</b><button type="button" data-step='${JSON.stringify([m, k, 1])}' aria-label="plus">+</button></div>`;
@@ -678,12 +685,16 @@
       setPath(["objectives",key],event);
     }catch(e){toast(e.message);}
   }
+  let objectivesKey="";
   function renderObjectives() {
     const el=$("#objectives"), now=clockSec();
     if(el.contains(document.activeElement))return;
+    const nextKey=JSON.stringify(S.objectives);
+    if(objectivesKey!==nextKey){
+    objectivesKey=nextKey;
     el.innerHTML=`<p class="note">Record a visible countdown or a confirmed observation. Respawn periods vary by patch; no timer is guessed from a missing icon.</p>`+OBJECTIVES.map(o=>{
-      const event=S.objectives[o.key], st=M.objectiveStatus(event,now);
-      return `<div class="objective-row"><b>${o.label}</b> · ${esc(st.text)} ${st.remaining==null?"":`<strong>${fmt(st.remaining)}</strong>`}
+      const event=S.objectives[o.key];
+      return `<div class="objective-row" data-objective-row="${o.key}"><b>${o.label}</b> · <span data-objective-status></span> <strong data-objective-remaining></strong>
         <div class="note">${event?`${esc(event.source)} · observed ${fmt(event.at)} by ${esc(label(event.who||"guest"))}`:"No confirmed observation"}</div>
         <button type="button" class="chip" data-available="${o.key}">Available</button>
         <button type="button" class="chip" data-taken="${o.key}">Taken now</button>
@@ -695,6 +706,8 @@
     el.querySelectorAll("[data-taken]").forEach(b=>b.onclick=()=>recordObjective(b.dataset.taken,"defeated",null));
     el.querySelectorAll("[data-countdown]").forEach(b=>b.onclick=()=>{const key=b.dataset.countdown,sec=M.parseTime(el.querySelector(`[data-time="${key}"]`).value);if(sec==null)return toast("Enter a countdown as m:ss.");recordObjective(key,"countdown",sec);});
     el.querySelectorAll("[data-undo-objective]").forEach(b=>b.onclick=()=>setPath(["objectives",b.dataset.undoObjective],S.objectives[b.dataset.undoObjective]?.previous||null));
+    }
+    for(const o of OBJECTIVES){const row=el.querySelector(`[data-objective-row="${o.key}"]`),st=M.objectiveStatus(S.objectives[o.key],now),text=row.querySelector('[data-objective-status]'),remaining=row.querySelector('[data-objective-remaining]');if(text.textContent!==st.text)text.textContent=st.text;remaining.hidden=st.remaining==null;const value=st.remaining==null?'':fmt(st.remaining);if(remaining.textContent!==value)remaining.textContent=value;}
   }
   async function preparePhoto(file,reader) {
     if(scanBusy)return toast("Wait for the current scan to finish.");
@@ -878,15 +891,17 @@
       if(!confirm("Clear this match for everyone in the room?"))return;
       cancelPhoto("",true);scanAnnouncements.clear();lastBoardRead=null;previousScan=null;$("#scan-review").hidden=true;$("#map-review").hidden=true;hideScanProgress();replaceState(blank());toast("Match cleared");
     };
-    matchFocus=window.SquadMatchFocus.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast,onScan:()=>$("#camera-open").click()});window.__matchFocus=matchFocus;
+    matchFocus=window.SquadMatchFocus.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast,externalTicker:true,onScan:()=>$("#camera-open").click()});window.__matchFocus=matchFocus;
     renderWake(); renderRoom(); render();
     const q = new URLSearchParams(location.search).get("room") || store.get("squad-room", null);
     if (q && !window.SquadHandoff?.pending) joinRoom(q, false);
     if(wake.on)wake.enable();
     clearInterval(tick); tick = setInterval(() => {
       if(document.visibilityState !== "visible") return;
-      if(S.board && Math.floor(Date.now()/1000)%15===0)renderCounterBuild();
-      matchFocus?.render();if(S.clock?.startedAt) { renderLive(); renderObjectives(); if(Math.floor(clockSec())%15===0){renderStrategy();renderBoard();} }
+      const strategyDue=!!S.clock?.startedAt&&Math.floor(clockSec())%15===0;
+      if(S.board&&!strategyDue&&Math.floor(Date.now()/1000)%15===0)renderCounterBuild();
+      if(S.clock?.startedAt){renderLive();renderObjectives();if(strategyDue){renderStrategy();renderBoard();}}
+      matchFocus?.render();
     },1000);
     document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") { render(); refreshRoom().then(flush); } });
     document.addEventListener("squad:plan", consumePlan);

@@ -27,7 +27,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
    const capture=async(metadata={})=>page.evaluate(metadata=>{const c=document.createElement('canvas');c.width=1920;c.height=1080;c.getContext('2d').fillRect(0,0,c.width,c.height);const id=archive.capture(c,metadata);c.width=0;c.height=0;return id;},metadata);
    await open();await page.evaluate(()=>archive.hold());
    const first=await capture({screen:'scoreboard'});await wait(first,'queued');await page.waitForTimeout(400);assert.equal(await page.evaluate(()=>__calls.length),0,'OCR hold prevents upload');
-   await page.evaluate(()=>{__mode='fail';archive.release();});await page.waitForFunction(()=>__calls.length===1);await page.waitForFunction(()=>archive.status().error.includes('simulated upload failure'));await wait(first,'queued');
+   await page.evaluate(()=>{__mode='fail';archive.release();});
+   await page.evaluate(id=>archive.update(id,{strategyDisplayed:true}),first);
+   await page.waitForTimeout(900);assert.equal(await page.evaluate(()=>__calls.length),0,'metadata updates cannot bypass the post-strategy upload delay');
+   await page.waitForFunction(()=>__calls.length===1);await page.waitForFunction(()=>archive.status().error.includes('simulated upload failure'));await wait(first,'queued');
    const photo=await page.evaluate(()=>__calls[0]);assert.equal(photo.width,1920);assert.equal(photo.height,1080);assert.equal(photo.metadata.screen,'scoreboard');
    await page.evaluate(()=>{__mode='ok';archive.retry();});await wait(first,'saved');
 

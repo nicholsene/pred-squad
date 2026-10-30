@@ -1,9 +1,10 @@
 /* Private, durable photo outbox. No room state or reviewer credentials belong here. */
 (function(root){'use strict';
-function create({url,key,onStatus=()=>{}}){
+function create({url,key,onStatus=()=>{},uploadDelayMs=1500}){
  const endpoint=url+'/functions/v1/scan-collector',DB='squad-scan-archive-v1',S='captures';
  let enabled=true;try{enabled=localStorage.getItem('squad-save-scans')!=='off';}catch{}
  let opening,busy=false,destroyed=false,holds=0,timer=null,lastError='',saved=0,waiting=0;
+ let resumeAt=0,idle=null;
  const pending=new Map(),unsaved=new Map();
  const notify=()=>onStatus({enabled,saved,waiting:waiting+unsaved.size,error:unsaved.size?unsaved.size+' photo(s) could not be saved on this device. Keep this page open and retry.':lastError});
  function db(){return opening||=(new Promise((resolve,reject)=>{const req=indexedDB.open(DB,1);req.onupgradeneeded=()=>req.result.createObjectStore(S,{keyPath:'id'});req.onerror=()=>reject(req.error);req.onsuccess=()=>resolve(req.result);}));}
@@ -20,9 +21,10 @@ function create({url,key,onStatus=()=>{}}){
   const i=identity(),r=await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,apikey:key,'x-scan-device':i.id,'x-scan-key':i.secret,...(body instanceof FormData?{}:{'Content-Type':'application/json'})},body:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(90000)});
   const data=await r.json();if(!r.ok)throw Error(data.error||'upload failed');return data;
  }
- function schedule(delay=250){if(destroyed)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void pump();},delay);}
+ function schedule(delay=250){if(destroyed)return;clearTimeout(timer);if(idle!==null){root.cancelIdleCallback?.(idle);idle=null;}timer=setTimeout(()=>{timer=null;if(root.requestIdleCallback)idle=root.requestIdleCallback(()=>{idle=null;void pump();},{timeout:2000});else void pump();},Math.max(delay,resumeAt-Date.now()));}
  async function pump(){
   if(destroyed||busy||holds||!enabled||navigator.onLine===false)return;
+  if(Date.now()<resumeAt){schedule();return;}
   busy=true;let retry=false;
   try{
    for(const row of await all()){
@@ -54,7 +56,7 @@ function create({url,key,onStatus=()=>{}}){
  }
  const online=()=>schedule(0);root.addEventListener('online',online);
  void count();schedule(1000);
- return{capture,update,hold:()=>{holds++;},release:()=>{holds=Math.max(0,holds-1);schedule();},retry:async()=>{for(const[id,r]of unsaved)if(r)try{await edit(id,()=>r);unsaved.delete(id);}catch(e){error(e);}await count();schedule(0);},status:()=>({enabled,saved,waiting:waiting+unsaved.size,error:unsaved.size?'Photo not saved on device; keep this page open and retry. '+lastError:lastError}),setEnabled:value=>{enabled=!!value;try{localStorage.setItem('squad-save-scans',enabled?'on':'off');}catch{}notify();if(enabled)schedule();},destroy:()=>{destroyed=true;clearTimeout(timer);root.removeEventListener('online',online);}};
+ return{capture,update,hold:()=>{holds++;},release:()=>{holds=Math.max(0,holds-1);resumeAt=Math.max(resumeAt,Date.now()+Math.max(0,uploadDelayMs));schedule();},retry:async()=>{for(const[id,r]of unsaved)if(r)try{await edit(id,()=>r);unsaved.delete(id);}catch(e){error(e);}await count();schedule(0);},status:()=>({enabled,saved,waiting:waiting+unsaved.size,error:unsaved.size?'Photo not saved on device; keep this page open and retry. '+lastError:lastError}),setEnabled:value=>{enabled=!!value;try{localStorage.setItem('squad-save-scans',enabled?'on':'off');}catch{}notify();if(enabled)schedule();},destroy:()=>{destroyed=true;clearTimeout(timer);if(idle!==null)root.cancelIdleCallback?.(idle);root.removeEventListener('online',online);}};
 }
 root.ScanArchive={create};
 })(window);
