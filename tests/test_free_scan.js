@@ -72,3 +72,20 @@ console.log('FreeScan: loading crop proposals require measured roles and anchors
  assert(conflict.ours[1].readConfidence.k.disputed);assert.equal(Q.automaticBoard(conflict,{heroes,squad}).result.ours[1].k,null);
 }
 console.log('FreeScan: numeric retries retain measured geometry, actual evidence polygons and unresolved conflicts');
+
+{
+ const read=fixture();read.items=read.items.filter(it=>!['GREYSTONE','AKERON'].includes(it.text));
+ const p=F.prepareBoard(read,{heroes,squad});assert.equal(p.cells.length,0,'both top rows absent cannot anchor absolute lane slots');assert(p.result.ours.every(r=>r.hero===null));
+ const interior=fixture();interior.items=interior.items.filter(it=>!['NEON','SERATH'].includes(it.text));assert(F.prepareBoard(interior,{heroes,squad}).cells.length>0,'observed top and bottom still anchor a grid with internal gaps');
+}
+
+{
+ const p=F.prepareBoard(fixture(),{heroes,squad});const read={items:[{text:'6',score:.999}],levelGlyphCount:2};
+ const r=F.applyCells(p,{'ours:0:lvl':read});assert.equal(r.ours[0].lvl,null);assert(r.ours[0].readConfidence.lvl.shapeConflict);assert(!r.ours[0].readConfidence.lvl.resolved,'two glyphs cannot confirm a single-digit level');
+ const ok=F.applyCells(p,{'ours:0:lvl':{...read,items:[{text:'16',score:.99}]}});assert.equal(ok.ours[0].lvl,16);
+}
+
+{
+ const p=F.prepareBoard(fixture(),{heroes,squad});p.result.ours[0].lvl=6;p.result.ours[0].readConfidence.lvl={value:6,resolved:true,metrics:{ocr:.99,match:1}};
+ const r=F.applyCells(p,{'ours:0:lvl':{items:[],levelGlyphCount:2}});assert.equal(r.ours[0].lvl,null,'shape conflict must also reject a prior overview read when atlas OCR is blank');
+}

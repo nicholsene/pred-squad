@@ -236,3 +236,8 @@ body.match-focus #scan-progress.photo-scan-progress{display:grid!important;grid-
 
 .quick-item-icon{position:relative;display:inline-flex;flex-shrink:0;margin-left:4px}
 .quick-build-order{position:absolute;z-index:1;top:-4px;left:-4px;display:grid;place-items:center;min-width:16px;height:16px;padding:0 3px;border-radius:8px;background:var(--accent);color:var(--accent-ink);font-size:10px;line-height:1;font-weight:700;border:1px solid var(--paper,var(--glass-strong))}
+
+.mf-build-explorer{border:1px solid var(--edge);border-radius:17px;padding:10px;background:var(--paper,var(--glass-strong))}.mf-build-explorer h3{font-size:16px;margin:0 0 8px}
+.mf-build-explorer .quick-recommendation{display:flex;flex-direction:column;gap:8px}
+.mf-build-explorer .quick-build-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;list-style:none;padding:0;margin:0}
+.mf-build-explorer .quick-build-items li{display:flex;align-items:center;gap:4px;min-width:0;font-size:10px}.mf-build-explorer .quick-item-label{overflow-wrap:anywhere}

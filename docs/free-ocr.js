@@ -148,6 +148,22 @@
   }
   return out;
  }
+ // Independent shape evidence only rejects incomplete level reads. It never
+ // assigns a number, and ambiguous components provide no digit-count evidence.
+ function levelDigitCount(source,c){
+  const x=Math.max(0,Math.floor(c.x)),y=Math.max(0,Math.floor(c.y)),w=Math.min(source.width-x,Math.ceil(c.w)),h=Math.min(source.height-y,Math.ceil(c.h));if(w<8||h<8)return null;
+  const a=source.getContext('2d').getImageData(x,y,w,h).data,seen=new Uint8Array(w*h),parts=[];
+  for(let i=0;i<w*h;i++){
+   if(seen[i]||Math.min(a[i*4],a[i*4+1],a[i*4+2])<150)continue;
+   const todo=[i];seen[i]=1;let x0=w,y0=h,x1=0,y1=0,n=0;
+   while(todo.length){const q=todo.pop(),px=q%w,py=Math.floor(q/w);x0=Math.min(x0,px);x1=Math.max(x1,px);y0=Math.min(y0,py);y1=Math.max(y1,py);n++;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const xx=px+dx,yy=py+dy;if(xx<0||yy<0||xx>=w||yy>=h)continue;const z=yy*w+xx;if(!seen[z]&&Math.min(a[z*4],a[z*4+1],a[z*4+2])>=150){seen[z]=1;todo.push(z);}}}
+   const bh=y1-y0+1,bw=x1-x0+1;if(n>=3&&bh>=h*.17&&bh<=h*.6&&bw<=h*.6&&x0>w*.08&&x1<w*.92&&y0>h*.12&&y1<h*.88)parts.push({x0,y0,x1,y1,h:bh});
+  }
+  if(parts.length!==2)return null;parts.sort((a,b)=>a.x0-b.x0);const[a1,b]=parts;
+  if(b.x0<=a1.x1||b.x0-a1.x1>h*.3||Math.max(a1.h,b.h)>Math.min(a1.h,b.h)*1.8||Math.abs(a1.y0+a1.y1-b.y0-b.y1)>h*.2||Math.abs((a1.x0+b.x1)/2-w/2)>w*.2)return null;
+  return 2;
+ }
  function atlas(source,cells,{image=source}={}){
   const ratioX=(image.naturalWidth||image.width)/source.width,ratioY=(image.naturalHeight||image.height)/source.height;
   if(!(ratioX>0&&ratioY>0&&Number.isFinite(ratioX)&&Number.isFinite(ratioY)))throw Error('Photo detail source is unavailable.');
@@ -158,9 +174,10 @@
   for(let cell of cells){if(['k','d','a'].includes(cell.field)){const crop=stats.get(cell.id);if(!crop)continue;cell={...cell,...crop};}if(!widths[cell.field]||cell.w<=0||cell.h<=0)continue;const bx=x[cell.field],by=gap+(cell.side==='ours'?0:5)*rowH+cell.row*rowH,bw=widths[cell.field],bh=rowH-gap;
    const sx=Math.max(0,cell.x),sy=Math.max(0,cell.y),sw=Math.min(source.width-sx,cell.w),sh=Math.min(source.height-sy,cell.h);if(!(sw>0&&sh>0))continue;
    const scale=Math.min((bw-10)/sw,(bh-8)/sh,5),dw=sw*scale,dh=sh*scale,dx=bx+(bw-dw)/2,dy=by+(bh-dh)/2;
-   g.drawImage(image,sx*ratioX,sy*ratioY,sw*ratioX,sh*ratioY,dx,dy,dw,dh);regions.push({cell,sx,sy,scale,dx,dy,dw,dh});
+   g.drawImage(image,sx*ratioX,sy*ratioY,sw*ratioX,sh*ratioY,dx,dy,dw,dh);
+   regions.push({cell,sx,sy,scale,dx,dy,dw,dh});
   }
-  return{canvas,reads(result){const out={};for(const r of regions){const items=(result.items||[]).filter(item=>item.poly.every(([px,py])=>px>=r.dx-3&&px<=r.dx+r.dw+3&&py>=r.dy-3&&py<=r.dy+r.dh+3)).map(item=>({...item,sourcePoly:item.poly.map(([px,py])=>[r.sx+(px-r.dx)/r.scale,r.sy+(py-r.dy)/r.scale])}));out[r.cell.id]={items};}return out;}};
+  return{canvas,reads(result){const out={};for(const r of regions){const items=(result.items||[]).filter(item=>item.poly.every(([px,py])=>px>=r.dx-3&&px<=r.dx+r.dw+3&&py>=r.dy-3&&py<=r.dy+r.dh+3)).map(item=>({...item,sourcePoly:item.poly.map(([px,py])=>[r.sx+(px-r.dx)/r.scale,r.sy+(py-r.dy)/r.scale])}));out[r.cell.id]={items,...(r.cell.field==='lvl'?{levelGlyphCount:levelDigitCount(source,r.cell)}:{})};}return out;}};
  }
  root.FreeOCR={read,cancel,atlas,digits};
 })(window);

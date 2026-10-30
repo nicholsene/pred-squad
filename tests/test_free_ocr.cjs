@@ -10,6 +10,10 @@ const browser=await pw[engine].launch({headless:true,...(engine==="chromium"&&pr
 try{const context=await browser.newContext({serviceWorkers:"block"}),page=await context.newPage(),errors=[],outside=[];
 page.on("pageerror",e=>errors.push(e.message));await page.route("**/*",route=>{const u=new URL(route.request().url());if(!["blob:","data:"].includes(u.protocol)&&u.hostname!=="127.0.0.1"){outside.push(u.origin);return route.abort();}return route.continue();});
 await page.goto("http://127.0.0.1:"+server.address().port+"/");
+const shapeEvidence=await page.evaluate(()=>{
+ const c=document.createElement('canvas');c.width=240;c.height=100;const g=c.getContext('2d'),cell={id:'ours:0:lvl',side:'ours',row:0,field:'lvl',x:80,y:20,w:60,h:60};
+ const count=text=>{g.fillStyle='#181b21';g.fillRect(0,0,240,100);g.strokeStyle='#569ac2';g.lineWidth=2;g.beginPath();g.arc(110,50,25,0,Math.PI*2);g.stroke();g.fillStyle='#fff';g.font='bold 25px Arial';g.fillText(text,text.length===2?96:103,58);const a=FreeOCR.atlas(c,[cell]),n=a.reads({items:[]})[cell.id].levelGlyphCount;a.canvas.width=a.canvas.height=0;return n;};return [count('16'),count('8'),count('')];});
+assert.deepEqual(shapeEvidence,[2,null,null],'two white digit shapes are rejection evidence; ring or blank cannot invent a count');
 const run=()=>page.evaluate(async()=>{const c=document.createElement("canvas");c.width=900;c.height=240;const g=c.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);g.fillStyle="#111";g.font="bold 54px Arial";g.fillText("GREYSTONE",30,80);g.fillText("SKYLAR 150",30,170);const result=await FreeOCR.read(c);return{items:result.items,lines:result.lines};});
 const result=await run(),text=result.items.map(i=>i.text).join(" ");assert.match(text,/GREYSTONE/);assert.match(text,/SKYLAR/);assert(result.items.every(i=>i.poly.length===4&&i.score>=0&&i.score<=1));
 assert(result.lines.every(l=>l.length===1&&l[0].boxKind==="line"),"line boxes must not become invented word boxes");
