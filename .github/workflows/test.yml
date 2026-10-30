@@ -31,6 +31,7 @@ jobs:
       - run: node tests/test_profiles.js
       - run: node tests/test_mechanics.js
       - run: node tests/test_optimizer.js
+      - run: node tests/test_optimizer_cache.js
       - run: node tests/test_photo_time.js
       - run: node tests/test_photo_router.js
       - run: node tests/test_scan_quality.js
@@ -45,6 +46,7 @@ jobs:
       - run: node tests/test_scan_flow.cjs
       - run: node tests/test_scan_archive.cjs
       - run: node tests/test_match_advice.cjs
+      - run: MATCH_BROWSER=webkit node tests/test_match_advice.cjs
       - run: node tests/test_free_ocr.cjs
       - run: node tests/test_numeric_ocr.cjs
       - run: node tests/test_match_layout.cjs
