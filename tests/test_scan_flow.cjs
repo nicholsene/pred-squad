@@ -44,6 +44,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  page.once("dialog",d=>d.accept());await page.evaluate(()=>document.querySelector("#match-clear").click());
  await page.evaluate(()=>window.__finishOCR());await page.waitForTimeout(100);
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
+ // Loading review must not silently assign a player from a weak gamertag.
+ await page.evaluate(({S,who})=>{localStorage.setItem("squad-match",JSON.stringify({...S,clock:{startedAt:Date.now()-600000}}));localStorage.setItem("squad-me",JSON.stringify(who));},fixture);
+ await page.reload();await page.waitForFunction(()=>window.__matchFocus);await page.locator('[data-go="match"]').click();
+ await page.evaluate(({heroes,who})=>{
+   PhotoRouter.detect=async()=>({kind:"loading"});ScanQuality.assess=()=>({auto:false,score:20,issues:[]});
+   LoadingScan.scan=async()=>({ours:Object.fromEntries(SquadEngine.ROLES.map((r,i)=>[r,{hero:heroes[i],...(i===0?{who,readConfidence:{who:{value:who,source:"gamertag",metrics:{ocr:.2,match:1},resolved:true}}}:{})}])),theirs:Object.fromEntries(SquadEngine.ROLES.map((r,i)=>[r,{hero:heroes[i+5]}])),issues:[]});
+ },{heroes:fixture.heroes,who:fixture.who});
+ await upload();await page.locator("#scan-apply").waitFor();await page.locator("#scan-apply").click();
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).setup.ours.OFFLANE.who),"");
  // A shop route exposes name candidates without assigning them to owned slots.
  await page.evaluate(({S,who})=>{localStorage.setItem("squad-match",JSON.stringify({...S,clock:{startedAt:Date.now()-600000}}));localStorage.setItem("squad-me",JSON.stringify(who));},fixture);
  await page.reload();await page.waitForFunction(()=>window.__matchFocus);await page.locator('[data-go="match"]').click();

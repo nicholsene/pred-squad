@@ -224,7 +224,7 @@
       const row=res[side]?.[role];if(!row?.hero)continue;
       const previous=setup[side][role]||{};
       setup[side][role]={...previous,hero:row.hero};
-      if(side==="ours"&&row.who){identified.add(row.who);setup.ours[role].who=row.who;}
+      if(side==="ours"&&row.who&&row.readConfidence?.who?.metrics?.match===1&&window.ScanQuality.reliability(row.readConfidence.who,row.who)>=90){identified.add(row.who);setup.ours[role].who=row.who;}
       else if(side==="ours"&&previous.hero!==row.hero)setup.ours[role].who="";
     }
     for(const role of ROLES)if(identified.has(setup.ours[role]?.who)&&res.ours?.[role]?.who!==setup.ours[role].who)setup.ours[role].who="";
