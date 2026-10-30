@@ -34,7 +34,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.evaluate(()=>{window.__optimizerResult=()=>({status:'patch-review-required'});__matchFocus.render();});
   assert.equal(await page.locator('.mf-primary').count(),0,'patch gate cannot fall back to saved plan');
   assert.match(await page.locator('.mf-tactics').innerText(),/Your lane strategy[\s\S]*Team strategy/);
-  assert.match(await page.locator('.mf-tactics').innerText(),/Farm safely/);
+  assert.match(await page.locator('.mf-tactics').innerText(),/Next push/);assert.equal(await page.locator('.mf-next-push li').count(),3);
   await page.evaluate(f=>{window.__stableResult={status:'ready',assignment:[{who:f.who,item:f.item,targets:[],answers:[]}]};window.__optimizerResult=()=>__stableResult;__matchFocus.render();__matchFocus.readUpdate();},fixture);
   assert.equal(await page.locator('.mf-primary').count(),1);assert((await page.evaluate(()=>__said.at(-1))).includes(fixture.label));
   assert.equal(await page.locator('#match-focus button[data-scan]:visible,#quick-scan:visible').count(),1,'one live camera action');

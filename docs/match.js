@@ -376,6 +376,7 @@
     for(const role of ROLES)setup.theirs[role].fed=false;
     const st=E.boardState(board,setup,A.T);
     for(const f of st.fed)setup.theirs[f.role]={...setup.theirs[f.role],fed:true};
+    board=M.linkBoard(board,S.board);
     previousScan={before:{setup:M.clone(S.setup),live:M.clone(S.live),board:M.clone(S.board)},after:{setup:M.clone(setup),live:M.clone(live),board:M.clone(board)}};
     return [{path:["setup"],value:setup},{path:["live"],value:live},{path:["board"],value:board}];
   }
@@ -658,6 +659,7 @@
       try{const next=M.finish(S,b.dataset.outcome,me);cancelPhoto('',true);dialog.close();commit(['stage','finishedAt','events'].map(k=>({path:[k],value:next[k]})));toast('Match result saved.');}catch(error){toast(error.message);}
     };document.body.append(dialog);dialog.showModal();
   }
+  let buildStyleContext='',buildStyle='balanced';
   function renderLifecycle() {
     const issues=M.validateSetup(S.setup),el=$("#lifecycle"),pregame=S.stage!=="live"&&S.stage!=="finished";
     if(draftGameSession!==S.id){draftGameSession=S.id;draftGameTime=null;}
@@ -667,9 +669,15 @@
     const sampledClock=M.observedGameTime(S.board,S.id,Date.now())??0,time=draftGameTime??fmt(sampledClock);
     const laneButtons=pregame?'<div class="quick-lanes" role="group" aria-label="Your lane">'+ROLES.map(r=>'<button type="button" data-quick-lane="'+r+'" aria-pressed="'+(ownRole===r)+'">'+esc(roleName(r))+'</button>').join('')+'</div>':'';
     const hero=pregame&&own?'<label class="quick-hero">Your hero<select id="quick-hero" aria-label="Your hero"><option value="">Choose hero</option>'+A.heroes.map(h=>'<option value="'+esc(h.slug)+'" '+(own.hero===h.slug?'selected':'')+'>'+esc(h.name)+'</option>').join('')+'</select></label>':'';
-    const items=pregame&&plan?'<ol class="quick-build-items">'+plan.items.map(n=>'<li>'+planningUI.icon(A.items.find(i=>i.name===n),32)+'<span>'+esc(planningUI.itemName(n))+'</span></li>').join('')+'</ol>':'';
+    const suggestionInput={hero:own?.hero,role:ownRole,catalog:A.items,heroes:A.heroes,patchReview:A.patchReview},styleKey=[S.id,me,ownRole,own?.hero].join(':');
+    if(buildStyleContext!==styleKey){buildStyleContext=styleKey;buildStyle=plan?'saved':'balanced';}
+    if(buildStyle==='saved'&&!plan)buildStyle='balanced';
+    const styles=window.BuildPlans.stylesFor(suggestionInput),suggestion=window.BuildPlans.suggest({...suggestionInput,style:buildStyle==='saved'?'balanced':buildStyle}),shown=buildStyle==='saved'&&plan?{...plan,status:'ready',label:'Saved plan',cost:plan.items.reduce((n,name)=>n+(A.items.find(it=>it.name===name)?.cost||0),0),tip:'Your chosen item order. Adapt after you see the enemy lineup.'}:suggestion;
+    const items=pregame?'<section class="quick-recommendation" aria-label="Suggested starting build">'+(styles.length?'<label class="quick-build-style">Build style<select id="quick-build-style" aria-label="Build style">'+(plan?'<option value="saved" '+(buildStyle==='saved'?'selected':'')+'>Saved plan</option>':'')+styles.map(st=>'<option value="'+st.id+'" '+(buildStyle===st.id?'selected':'')+'>'+esc(st.label)+'</option>').join('')+'</select></label>':'')+(shown.status==='ready'?'<p class="quick-build-summary">'+esc(shown.label)+' · '+shown.cost.toLocaleString()+'g full build</p><ol class="quick-build-items">'+shown.items.map(name=>{const it=A.items.find(i=>i.name===name);return '<li>'+planningUI.icon(it,30)+'<span class="quick-item-label">'+esc(planningUI.itemName(name))+'<small>'+it.cost.toLocaleString()+'g</small></span></li>';}).join('')+'</ol><p class="quick-build-tip">'+esc(shown.tip)+'</p>'+(buildStyle==='saved'?'<span class="quick-build-saved">Saved · planned items, not owned</span>':'<button type="button" class="chip cta" id="quick-use-build">Use this build</button><small class="quick-build-source">Suggested from current item stats · adjust to the match</small>'):'<p class="quick-build-tip" role="status">'+esc(shown.reason)+'</p>')+'</section>':'';
     const intake=S.stage==="finished"?'':'<div class="intake-switch" role="group" aria-label="Build input"><button type="button" data-intake="scan" aria-pressed="'+(intakeMode==="scan")+'">Photo</button><button type="button" data-intake="manual" aria-pressed="'+(intakeMode==="manual")+'">Build manually</button></div><div class="intake-panel">'+(intakeMode==="scan"?'<p class="note" id="prep-board">Use the camera button below to scan a game screen. Readable stats update automatically.</p>':'<p class="note">Choose and review your six intended items. These stay separate from owned equipment.</p><button class="chip ghost" type="button" id="prep-manual">Choose build items</button>')+'</div>';
     el.innerHTML='<b>'+(pregame?'Recommended build':S.stage==="live"?'Match in progress':'Match finished')+'</b>'+(pregame?'<p class="note">Choose your lane, review your build and start tracking the game.</p>':'')+laneButtons+hero+items+intake+(issues.length?'<p class="warn">'+issues.map(esc).join(' ')+'</p>':'')+(pregame?'<label class="quick-game-time">Game time now<input id="game-time" aria-label="Game time now" inputmode="numeric" value="'+esc(time)+'" placeholder="0:00"></label><p class="note">Enter the time already showing in game. A reviewed screenshot clock is used automatically.</p>':'')+'<div class="lifecycle-actions">'+(pregame?'<button type="button" class="chip cta" id="clock-start">Start game</button>':'')+(S.stage==="live"?'<button type="button" class="chip" id="match-finish">Finish match</button>':'')+(previousScan?'<button type="button" class="chip ghost" id="undo-scan">Undo last scan</button>':'')+'</div>';
+    const styleSelect=el.querySelector('#quick-build-style');if(styleSelect)styleSelect.onchange=()=>{buildStyle=styleSelect.value;renderLifecycle();};
+    const useBuild=el.querySelector('#quick-use-build');if(useBuild)useBuild.onclick=()=>{try{const ctx=planningUI.context(me),next=window.BuildPlans.createBaseline({...ctx,items:shown.items,nextItem:shown.items[0],style:shown.style,source:'suggestion',confirmed:true});buildStyle='saved';commit([{path:['buildPlans',me],value:next}],true);toast('Starting build saved. Owned items are confirmed by scans.');}catch(error){toast(error.message);}};
     el.querySelectorAll('[data-intake]').forEach(b=>b.onclick=()=>{intakeMode=b.dataset.intake;renderLifecycle();});
     el.querySelectorAll('[data-quick-lane]').forEach(b=>b.onclick=async()=>{try{
       if(!me){const who=await chooseIdentity(A.squad.players.map(p=>p.key));if(!who)return;me=who;store.set("squad-me",me);$("#me").value=me;}
@@ -691,6 +699,7 @@
   function recordObjective(key,kind,remaining,source="manual",at=clockSec()) {
     try {
       const event=M.objectiveEvent(kind,at,remaining,source,me);
+      event.sessionId=S.id;event.observedAt=Date.now();
       event.previous=S.objectives[key]?{...S.objectives[key],previous:undefined}:null;
       setPath(["objectives",key],event);
     }catch(e){toast(e.message);}
@@ -853,7 +862,7 @@
       const seconds=M.parseTime($("#map-time").value),observation=M.parseTime($("#map-observed").value);
       if(seconds==null||seconds>1200)throw new Error("Enter a countdown from 0:00 to 20:00.");
       if(observation==null||observation>clockSec()+10)throw new Error("Check the game time shown in the photo.");
-      const event=M.objectiveEvent("countdown",observation,seconds,"minimap photo",me);event.previous=S.objectives[objective]??null;
+      const event=M.objectiveEvent("countdown",observation,seconds,"minimap photo",me);event.sessionId=S.id;event.observedAt=S.clock.startedAt+observation*1000;event.previous=S.objectives[objective]??null;
       savedScan([{path:["objectives",objective],value:event}],ticket,"minimap");close();toast("Objective timer updated.");
     };
     $("#map-read").onclick=()=>exclusiveScan(async()=>{

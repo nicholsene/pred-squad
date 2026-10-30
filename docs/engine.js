@@ -418,34 +418,87 @@
     }
     return {score:metrics.length?metrics.reduce((s,m)=>s+m.contribution,0):null,coverage:metrics.reduce((s,m)=>s+m.weight,0),metrics,weights:{...weights}};
   }
-  function liveStrategy(board,setup={},who,{now=Date.now(),clock=null,objectives={},nameOf=x=>x}={}) {
-    const roles=ROLES.filter(r=>who&&setup.ours?.[r]?.who===who),mine=roles.length===1?roles[0]:null;
+  // Objective calls advance only at meaningful phases, not on every second.
+  function strategyObjective(objectives={},clock,sessionId,now=Date.now()) {
+    if(!Number.isFinite(clock)||!sessionId)return null;
+    const names={fangtooth:'Fangtooth',orb:'Orb Prime',shaper:'Shaper'};
+    return Object.entries(objectives).flatMap(([id,e])=>{
+      if(!names[id]||e?.confirmed!==true||e.sessionId!==sessionId||!Number.isFinite(e.observedAt)||now<e.observedAt||now-e.observedAt>180000||!Number.isFinite(e.at)||e.at>clock||!Number.isFinite(e.respawnAt)||e.respawnAt<e.at||/estimated|heuristic/i.test(e.source||''))return[];
+      const remaining=e.respawnAt-clock,phase=remaining>0&&remaining<=60?'prep':remaining<=0&&remaining>=-30?'check':null;
+      return phase?[{id,name:names[id],phase,key:id+':'+phase,remaining}]:[];
+    }).sort((a,b)=>a.remaining-b.remaining||a.id.localeCompare(b.id))[0]||null;
+  }
+  function liveStrategy(board,setup={},who,{now=Date.now(),clock=null,objectives={},nameOf=x=>x,previousDecision=null}={}) {
+    const finite=Number.isFinite,roles=ROLES.filter(r=>who&&setup.ours?.[r]?.who===who),mine=roles.length===1?roles[0]:null;
+    const area=r=>r==='SUPPORT'||r==='CARRY'?'Carry / duo lane':r==='JUNGLE'?'jungle':r==='OFFLANE'?'Offlane':(ROLE_LABEL[r]||r)+' lane';
     const matches=board&&ROLES.every((r,i)=>['ours','theirs'].every(s=>!setup[s]?.[r]?.hero||board[s]?.[i]?.hero===setup[s][r].hero));
-    const fresh=!!matches&&Number.isFinite(board.at)&&now>=board.at&&now-board.at<=180000;
-    const base=mine==='JUNGLE'?'Clear safe camps and look for nearby support; avoid blind invades.':mine==='SUPPORT'?'Protect your carry’s farm, maintain vision and avoid isolated trades.':'Collect safe farm, protect your tower and check missing enemies before extending.';
-    if(!fresh)return {fresh:false,role:mine,priority:'Get a current scoreboard',lane:base,team:'Protect towers and collect safe farm until current leads are known.',reason:board?'Snapshot expired or lineup changed.':'No current scoreboard.',lanes:[]};
+    const fresh=!!matches&&finite(board.at)&&now>=board.at&&now-board.at<=180000;
+    const safe=mine==='JUNGLE'?'Take a safe camp on your own side before looking for a supported play.':mine==='SUPPORT'?'Return with your carry and cover their next safe wave.':'Return to '+(mine?area(mine):'your lane')+' and collect the next safe wave.';
+    if(!fresh)return {fresh:false,role:mine,priority:'Get a current scoreboard',lane:safe,team:'Keep waves covered until current leads are known.',reason:board?'Snapshot expired or lineup changed.':'No current scoreboard.',evidence:[],nextPush:[safe,'Check enemy positions before crossing river.','Stop the push if cover or vision is missing.'],stop:'Do not commit from an expired snapshot.',rotation:null,lanes:[],decisionKey:'stale:'+mine};
     const lanes=ROLES.map((role,i)=>({role,ours:board.ours?.[i]||{},theirs:board.theirs?.[i]||{},...laneLead(board.ours?.[i],board.theirs?.[i],role)}));
-    const own=lanes.find(l=>l.role===mine),delta=(row,f)=>row?.metrics.find(m=>m.field===f)?.delta??null,ld=delta(own,'lvl'),cs=delta(own,'cs');
-    let lane=base,priority='Farm safely and build pressure';
-    if(!mine){priority='Choose your identity';lane='Choose who you are to receive your lane’s specific call.';}
-    else if((ld!==null&&ld<=-1)||(own?.score!==null&&own?.score<=-12)){
-      priority='Stay back and recover';lane=mine==='JUNGLE'?'Clear safe camps and ask teammates to cover entrances; avoid solo contests.':mine==='SUPPORT'?'Stay with your carry, protect safe farm and avoid isolated trades.':'Stay back and farm safely. Avoid solo trades; ask for cover while the gap closes.';
-    }else if(ld!==null&&ld>=1&&own.score>=0){
-      priority='Use your level lead';lane=mine==='JUNGLE'?'Use your level lead to support a nearby lane; keep an escape route and check enemy positions.':mine==='SUPPORT'?'Apply pressure together with your carry; ward exits before moving forward.':'You outlevel your counterpart. Push safe waves and pressure the tower when enemy positions, health and cooldowns allow.';
-    }else if(cs!==null&&cs<=-15&&mine!=='SUPPORT'){priority='Catch up on farm';lane=mine==='JUNGLE'?'Recover your camp clear before forcing another fight.':'Prioritize safe last hits and experience before roaming or forcing a fight.';}
-    else if(own?.score>=12&&own.coverage>=35){priority='Convert your measured lead';lane=mine==='SUPPORT'?'Help your carry convert pressure into safe tower damage, then reset together.':'Pressure a safe wave, look for tower damage and reset before you overextend.';}
-    const measured=lanes.filter(l=>l.score!==null),mean=measured.length>=3?measured.reduce((s,l)=>s+l.score,0)/measured.length:null;
-    let team=mean!==null&&mean<=-8?'Defend towers, recover farm and avoid isolated fights. Set safe vision before contesting.':mean!==null&&mean>=8?'Push safe waves together, then turn pressure into tower damage or a verified objective.':'Keep waves covered, establish vision and regroup before a committed fight.';
-    const threats=lanes.filter(l=>Number.isFinite(l.theirs.k)&&Number.isFinite(l.theirs.d)&&l.theirs.k>=5&&l.theirs.k-l.theirs.d>=4).sort((a,b)=>(b.theirs.k-b.theirs.d)-(a.theirs.k-a.theirs.d));
-    if(threats.length)team='Respect '+nameOf(threats[0].theirs.hero)+'’s observed kill lead. Cover teammates and avoid fighting this threat alone; protect farm first.';
-    const upcoming=Number.isFinite(clock)?Object.entries(objectives).filter(([,e])=>e&&Number.isFinite(e.respawnAt)&&e.respawnAt-clock>0&&e.respawnAt-clock<=60&&!/estimated|heuristic/i.test(e.source||'')).sort((a,b)=>a[1].respawnAt-b[1].respawnAt)[0]:null;
-    if(upcoming){const names={fangtooth:'Fangtooth',orb:'Orb Prime',shaper:'Shaper'},name=names[upcoming[0]]||'the objective';team='Prepare safe vision for '+name+' in about '+Math.ceil(upcoming[1].respawnAt-clock)+'s. Cover nearby waves and check the map before committing'+(mean!==null&&mean<0?'; avoid forcing an even fight.':'.');if(!own||ld===null||ld>=0)priority='Prepare the next objective';}
-    const reason=!own?'Lane identity is unassigned.':ld===null?'Level comparison unread; using other observed stats.':(ld>0?'Up ':ld<0?'Down ':'Even at ')+Math.abs(ld)+' level'+(Math.abs(ld)===1?'':'s')+' versus the same-role counterpart.';
-    return {fresh:true,role:mine,priority,lane,team,reason,lanes,coverage:own?.coverage||0};
+    const own=lanes.find(l=>l.role===mine),delta=(row,f)=>row?.metrics.find(m=>m.field===f)?.delta??null,ld=delta(own,'lvl'),cs=delta(own,'cs'),me=own?.ours||{},enemy=own?.theirs||{},enemyName=nameOf(enemy.hero||'your counterpart');
+    const prior=board.previous,history=prior&&typeof board.sessionId==='string'&&board.sessionId===prior.sessionId&&finite(prior.at)&&prior.at<board.at&&board.at-prior.at<=300000&&(!finite(prior.clock)||!finite(board.clock)||board.clock>=prior.clock)&&ROLES.every((r,i)=>['ours','theirs'].every(side=>board[side]?.[i]?.hero&&board[side][i].hero===prior[side]?.[i]?.hero));
+    const changes=(side,i)=>{
+      const before=history?prior[side]?.[i]:null,current=board[side]?.[i];if(!before||!current)return{};
+      if(['lvl','k','d','a','cs','gold'].some(f=>finite(before[f])&&finite(current[f])&&current[f]<before[f]))return{};
+      return Object.fromEntries(['lvl','k','d','a','cs'].filter(f=>finite(before[f])&&finite(current[f])).map(f=>[f,current[f]-before[f]]));
+    };
+    const lineup=ROLES.flatMap((r,i)=>[board.ours?.[i]?.hero||'',board.theirs?.[i]?.hero||'']).join('|');
+    const changed=mine?changes('ours',ROLES.indexOf(mine)):{},memory=previousDecision?.sessionId===board.sessionId&&previousDecision?.who===who&&previousDecision?.hero===me.hero&&previousDecision?.role===mine&&previousDecision?.lineup===lineup?previousDecision:null;
+    const farmBand=cs===null?(memory?.farmBand==='behind'?'behind':'unknown'):cs<=-15||memory?.farmBand==='behind'&&cs<-5?'behind':cs>=15?'ahead':'even';
+    let posture='farm';
+    if((ld!==null&&ld<0)||(memory?.posture==='recover'&&(ld===null||cs===null&&memory.farmBand==='behind')&&(ld===null||ld<=0))||(own?.score!=null&&own.score<=-12)||(memory?.posture==='recover'&&own?.score!=null&&own.score<-6))posture='recover';
+    else if(ld!==null&&ld>0&&own?.score>=0||own?.score>=12&&own?.coverage>=35||memory?.posture==='pressure'&&own?.score>=6&&own?.coverage>=35)posture='pressure';
+    else if(farmBand==='behind'&&mine!=='SUPPORT')posture='farm';
+    const stableCounters=memory&&['k','d','lvl'].every(f=>finite(me[f])&&me[f]===memory[f])&&enemy.lvl===memory.enemyLvl&&posture===memory.posture&&farmBand===memory.farmBand;
+    const sameOrUnread=(a,b)=>!finite(a)||!finite(b)||a===b,holdReset=memory?.situation==='reset'&&!changed.d&&!changed.k&&['k','d','lvl'].every(f=>sameOrUnread(me[f],memory[f]))&&sameOrUnread(enemy.lvl,memory.enemyLvl)&&(posture===memory.posture||posture==='farm')&&(farmBand===memory.farmBand||farmBand==='unknown');
+    const situation=changed.d>0?'reset':changed.k>0?'convert':stableCounters||holdReset?memory.situation:'lane',repeatDeaths=changed.d>1||changed.d>0&&memory?.situation==='reset'&&finite(memory.d)&&me.d>memory.d||(stableCounters||holdReset)&&memory?.repeatDeaths===true;
+    const evidence=[];
+    if(ld!==null)evidence.push(nameOf(me.hero)+' Lv '+me.lvl+' vs '+enemyName+' Lv '+enemy.lvl+'.');
+    else evidence.push('Level comparison unread; no level advantage assumed.');
+    if(cs===null&&farmBand==='behind')evidence.push('Farm gap unread; keep the safe farming plan until it can be compared again.');
+    if(cs!==null)evidence.push(Math.abs(cs)+' CS '+(cs<0?'behind':cs>0?'ahead of':'difference from')+' '+enemyName+'.');
+    if(changed.d>0)evidence.push('Deaths increased by '+changed.d+' between these scans.');
+    if(changed.k>0)evidence.push('Kills increased by '+changed.k+' between these scans.');
+    let priority='Farm safely and build pressure',lane=safe,steps=[],stop='Leave the push when enemy positions or teammate cover are no longer checked.';
+    if(!mine){priority='Choose your identity';lane='Choose who you are to receive a personal next-push plan.';steps=[safe,'Check enemy positions before extending.','Keep a safe exit rather than forcing a blind fight.'];}
+    else if(posture==='recover'||situation==='reset'){
+      priority=repeatDeaths?'Stop the repeat deaths':posture==='recover'?'Stay back and recover':'Reset and recover';
+      lane=mine==='JUNGLE'?'On your next trip out, clear a safe camp on your own side; do not invade '+enemyName+' alone.':mine==='SUPPORT'?'On your next trip out, meet your carry and help them collect a safe wave before looking for a fight.':'On your next trip out, return to '+area(mine)+' for experience and last hits; skip solo trades with '+enemyName+'.';
+      steps=[mine==='JUNGLE'?'Clear your safe-side camps before another contest.':mine==='SUPPORT'?'Cover your carry’s safe wave and an escape route.':'Collect one safe wave in '+area(mine)+'; let an approaching enemy wave come toward your tower.',ld!==null&&ld<0?'Do not force the next push into '+enemyName+' while you are '+Math.abs(ld)+' level'+(Math.abs(ld)===1?'':'s')+' down; wait for cover or catch up first.':'Push a wave only after checking enemy positions and getting teammate cover.','If cover is missing, repeat safe farm rather than chasing a return kill.'];
+      stop='Stop before river if the enemy jungler is unaccounted for or your covering teammate leaves.';
+    }else if(posture==='pressure'||situation==='convert'){
+      priority=situation==='convert'?'Turn the kill into safe pressure':ld>0?'Use your level lead':'Convert your measured lead';
+      lane=mine==='JUNGLE'?'Finish a safe camp, then look for a teammate-supported lane play; keep an escape route.':mine==='SUPPORT'?'Move forward with your carry after the wave is covered; do not start an isolated trade.':(ld>0?'You outlevel '+enemyName+'. ':'')+'Clear one safe '+area(mine)+' wave, then check the map before extending.';
+      steps=[mine==='JUNGLE'?'Finish a safe camp, then join a teammate only if the target is visible.':mine==='SUPPORT'?'Help your carry move a wave forward together.':'Push one safe wave in '+area(mine)+' without chasing beyond it.','If allied minions reach a standing tower and enemy positions, health and cooldowns allow, take tower damage.','Leave before your minions or teammate cover run out; if the map is unclear, reset or take safe farm.'];
+      stop='A kill-count increase does not prove an enemy is still dead. Check the map before committing.';
+    }else{
+      priority=farmBand==='behind'&&mine!=='SUPPORT'?'Catch up on farm':'Farm safely and build pressure';
+      lane=mine==='JUNGLE'?'Keep a safe camp clear going; do not abandon it for a blind lane chase.':mine==='SUPPORT'?'Cover your carry’s next wave, then place safe vision with them.':'Take the next safe wave in '+area(mine)+' before committing to a roam.';
+      steps=[safe,'Move a wave forward only after the enemy jungler and your lane counterpart are accounted for.','If a tower push is not covered by your wave and teammates, hold the safe side and keep farming.'];
+    }
+    const measured=lanes.filter(l=>l.score!==null),mean=measured.length>=3?measured.reduce((n,l)=>n+l.score,0)/measured.length:null,teamMode=mean===null?'unknown':mean<=-8||memory?.teamMode==='recover'&&mean<-4?'recover':mean>=8||memory?.teamMode==='pressure'&&mean>4?'pressure':'even';
+    let team=teamMode==='recover'?'Cover the threatened waves first; defend with teammates instead of forcing a river fight.':teamMode==='pressure'?'Cover waves together, then choose a reachable tower behind allied minions. Do not split up to chase kills.':'Cover lanes before grouping; take a supported tower push only after checking enemy positions.';
+    const threat=lanes.filter(l=>finite(l.theirs.k)&&finite(l.theirs.d)&&l.theirs.k>=5&&l.theirs.k-l.theirs.d>=4).sort((a,b)=>(b.theirs.k-b.theirs.d)-(a.theirs.k-a.theirs.d))[0];
+    if(threat)team='Respect '+nameOf(threat.theirs.hero)+' ('+threat.theirs.k+'/'+threat.theirs.d+'). Group before fighting them; protect your wave instead of following them into fog.';
+    let rotation=null,supportMemory=null;
+    const avoid=lanes.filter(l=>l.role!=='JUNGLE'&&(delta(l,'lvl')<=-3&&delta(l,'lvl')!==null||delta(l,'lvl')<=-2&&finite(l.theirs.k)&&finite(l.theirs.d)&&l.theirs.k-l.theirs.d>=4)).sort((a,b)=>delta(a,'lvl')-delta(b,'lvl'))[0];
+    if(mine&&avoid)rotation={kind:'avoid',role:avoid.role==='SUPPORT'?'CARRY':avoid.role,hero:avoid.theirs.hero,text:'Avoid solo fights into '+nameOf(avoid.theirs.hero)+' in '+area(avoid.role)+'; they are '+Math.abs(delta(avoid,'lvl'))+' levels above '+nameOf(avoid.ours.hero)+'. Cover safe farm there rather than abandoning it.'};
+    const canHelp=mine&&(mine==='JUNGLE'||mine==='SUPPORT'||posture==='pressure'&&ld>=1&&cs!==null&&cs>=0)&&posture!=='recover'&&situation!=='reset';
+    const retainsSupport=l=>memory?.support?.role===l.role&&memory.support.hero===l.ours.hero&&memory.support.enemy===l.theirs.hero&&finite(memory.support.at)&&now>=memory.support.at&&now-memory.support.at<=180000&&(!finite(l.ours.d)||!finite(memory.support.deaths)||l.ours.d>=memory.support.deaths);
+    if(!rotation&&canHelp){const target=lanes.filter(l=>l.role!=='JUNGLE'&&area(l.role)!==area(mine)&&delta(l,'lvl')!==null&&delta(l,'lvl')<=-1&&l.score<0&&(retainsSupport(l)||changes('ours',ROLES.indexOf(l.role)).d>0||delta(l,'lvl')<=-2&&delta(l,'cs')!==null&&delta(l,'cs')<=-20)).sort((a,b)=>delta(a,'lvl')-delta(b,'lvl'))[0];
+      if(target){supportMemory={role:target.role,hero:target.ours.hero,enemy:target.theirs.hero,deaths:target.ours.d,at:retainsSupport(target)&&!(changes('ours',ROLES.indexOf(target.role)).d>0)?memory.support.at:board.at};rotation={kind:'support',role:target.role==='SUPPORT'?'CARRY':target.role,hero:target.ours.hero,text:'Support '+nameOf(target.ours.hero)+' in '+area(target.role)+' after your own '+(mine==='JUNGLE'?'safe camp':'wave')+' is covered. Help them collect a wave; fight only with a visible target and a covered exit.'};}}
+    const objective=strategyObjective(objectives,clock,board.sessionId,now);
+    if(objective&&rotation?.kind==='support'){rotation=null;supportMemory=null;}
+    if(objective){team=objective.phase==='prep'?'The recorded '+objective.name+' countdown is within a minute. Cover nearby waves, then approach with teammates and establish safe vision; do not enter alone.':'The recorded '+objective.name+' timer has elapsed. Check the map to confirm availability before moving; do not assume it is up.';
+      if(mine&&posture!=='recover'&&situation!=='reset'){priority=objective.phase==='prep'?'Set up '+objective.name:'Check '+objective.name+' before rotating';steps[1]=objective.phase==='prep'?'After covering your wave or camp, regroup for '+objective.name+' vision; enter only with teammate cover.':'Verify '+objective.name+' on the map; only rotate if it is available and your waves and route are covered.';}}
+    const decision={sessionId:board.sessionId,who,hero:me.hero,role:mine,posture,situation,k:me.k,d:me.d,lvl:me.lvl,enemyLvl:enemy.lvl,farmBand,teamMode,repeatDeaths:!!repeatDeaths,lineup,support:supportMemory};
+    const decisionKey=[board.sessionId,who,me.hero,mine,posture,situation,!!repeatDeaths,teamMode,threat?.theirs.hero,rotation?.kind,rotation?.role,rotation?.hero,objective?.key,priority].join('|');
+    return {fresh:true,role:mine,priority,lane,team,reason:evidence.join(' '),evidence,nextPush:steps,stop,rotation,lanes,coverage:own?.coverage||0,situation,decision,decisionKey};
   }
 
   const api = {
-    LEAD_WEIGHTS,laneLead,liveStrategy,
+    LEAD_WEIGHTS,laneLead,liveStrategy,strategyObjective,
     ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE, boardState,
     shrink, squadRows, togetherMatches, summarize, comboReport, record,
     memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor, matchPlan,

@@ -1,70 +1,56 @@
-# Consolidated release — publication authorized
+# Starting builds and specific tactical updates
 
-The user lifted the publication hold with “Let’s publish.” This combined release
-includes the validated local changes below. Private corpus files and the failed level
-reader experiment are excluded.
+Publication authorized by the user. This bundle follows PR14 and preserves the
+current catalogue, private scanner collection and existing reviewed plans.
 
-Local bundle prepared so far:
+## Starting builds
 
-- Upload queue enumerates record keys and reads one photo at a time. It no longer
-  bulk-loads all image payloads for every upload/observation lookup. Counts use a
-  streaming cursor without retaining an array of queued images. No schema migration.
-- A new scan hold prevents another observation request from starting after an older
-  photo upload completes. Existing requests may finish; queued work resumes afterward.
-- Routine Match ticks update clocks/status without serializing the full strategy
-  result. State edits still render immediately, and optimizer-result changes,
-  identity/session changes and freshness transitions trigger full refreshes.
-- Freshness is captured consistently with the rendered cache key, including a scan
-  expiring during rendering, so stale advice cannot remain cached at that boundary.
-- Replacing planning history with a same-sized array, growing it, or replacing the
-  hero catalogue invalidates optimizer results without serializing whole histories.
+The Recommended build area previously displayed only a saved reviewed plan. It now
+proposes six compatible current equipment targets for the selected hero and lane,
+with names, individual prices, total full-build cost and a playstyle explanation.
 
-Validation passed locally:
+Styles include Recommended, Aggressive damage, Attack speed, Critical strike,
+Anti-tank, Lifesteal / sustain, Mana regen / sustain, and Durable (Tank / durability
+for tanks). Unsupported styles are omitted; heroes without mana do not get a mana
+style. Suggestions use current catalogue fit heuristics, not a verified optimal
+build, measured DPS or a claimed win-rate benefit. No paid API is used.
 
-- Archive queue in Chromium and WebKit: bulk image reads forbidden, eight-photo
-  backlog drain, original dimensions, offline reload, retries, raced revisions,
-  pause and new-scan priority.
-- Match advice in Chromium and WebKit: 100 unchanged ticks perform zero full-result
-  serializations; changed results, expiration during rendering, countdown expiry,
-  focused input, new-session clearing and stale speech retain correct behavior.
-- Full scan-flow regression.
-- Browser flow and optimizer cache/invalidation regressions.
+Use this build explicitly saves intended targets. Previewing another style does
+not overwrite a saved plan, and intended targets never fill owned inventory.
+Current-data review gates remain in place. Small-phone previews scroll while
+Start game remains reachable.
 
-Changed sources: docs/scan-archive.js, docs/match-focus.js, docs/match.js,
-docs/optimizer-ui.js.
-Changed tests: tests/test_scan_archive.cjs, tests/test_match_advice.cjs,
-tests/test_optimizer_cache.js.
+## Tactical updates
 
-Private accuracy review: fourteen new captures from one new match were directly visually
-reviewed and partial labels appended in the private corpus. Listed fields: 290
-matched, zero incorrect accepted, 227 unobserved. Numeric subset: 191/350 recovered,
-159 missing. Related frames are correlated; this is one held-out match, not a general
-accuracy estimate. No OCR thresholds were tuned on it. Missed clock/digits and item
-slots are retained for future work. Private image/label files stay out of this release.
+Advice now gives the observed reason, three next-trip/push steps, a stop condition
+and team direction. Optional support/avoid-solo-fight calls require a measured
+reason. Carry and Support share the duo lane; Jungle is not a lane.
 
-No whole-phone memory/FPS improvement has been measured. State commits must keep
-calling the full render path; optimizer results are replaced when recomputed.
-Refresh fingerprints and increment the service-worker shell version only when
-preparing the final combined release; preserve the unsigned strategy-review policy.
+Accepted scans retain one compact preceding same-match numeric board. Invalid,
+mismatched, decreasing or missing comparisons cannot invent recent kills/deaths.
+A kill count increasing never establishes an enemy respawn window or a numbers
+advantage. Enemy positions, health, waves and standing towers must still be checked.
 
-Match strategy and result changes (unpublished):
-- End match now asks Win / Loss / Cancel; outcome history is append-only in existing
-  shared-session events, survives reload and can be corrected without changing finish time.
-- Main strategy shows priority, personal lane and team actions even when item evidence
-  is incomplete. Expired/changed lineups use safe generic advice. Finished matches show
-  the self-reported result rather than live calls.
-- Lane bars use bounded, non-renormalized weights: level 35, CS 15, earned gold 20,
-  kills 15, deaths 10, assists 5; support 35/5/15/10/20/15. Spendable gold is excluded.
-  These are transparent heuristics, not calibrated fight/win probabilities.
-- Strategy scrolls with fixed gameplay actions. Chrome and WebKit pass lifecycle,
-  speech, stale gates, unchanged-tick performance, and portrait/landscape layout checks.
-- Pure weighted strategy and manual lifecycle tests passed. New level-circle reader
-  experiment remains private and disabled pending held-out validation.
+Equivalent scans and small changes retain the decision rather than triggering
+another spoken update. Manual Read update still repeats on request. Re-evaluating
+a single death does not count it twice. Conservative recovery stays conservative
+when a later read loses fields rather than demonstrating improvement.
 
-Forced photo audit completed: 19 additional captures reviewed and private labels saved.
-All 92 currently downloaded captures now have current partial reviews; unlisted fields
-remain unreviewed. Last-match numeric subset: 514 correct, 434 missing, 2 incorrect
-out of 950 fields in 19 correlated scoreboard frames. Both incorrect values occurred
-in a not-applied scan. Missed leading digits and unknown classification are confirmed
-defects. Shop ownership and slot state extraction remain unsupported in these observations.
-Private level-isolation prototype failed calibration (one wrong value); not enabled.
+Current confirmed objective observations can redirect setup. Elapsed countdowns
+require map verification; objective setup suppresses a competing support rotation.
+Old timers without match/time provenance do not direct pushes.
+
+## Validation and limits
+
+Pure tests cover every supported catalogue hero/lane/style combination, legal
+non-conflicting targets, mana/sustain bonuses, costs, patch gates and ownership
+separation. Tactical tests cover comparable history, corrections, missing data,
+idempotence, stable decisions, optional lane calls and objective provenance.
+Chrome/WebKit checks cover previews, explicit adoption, reloads, phone layouts,
+unchanged-scan speech suppression, valid death updates, freshness and efficient ticks.
+The full Match browser flow and existing build/counterbuild/optimizer checks pass.
+
+The unvalidated level-reading experiment remains private and disabled. This release
+does not claim an OCR accuracy improvement. Private photos, labels and credentials
+are excluded. Source fingerprints and the shell cache are refreshed for publication;
+the unsigned patch-review policy is preserved.

@@ -13,6 +13,14 @@
     if (!s?.stage && v.clock.startedAt) v.stage = "live";
     return v;
   }
+  function linkBoard(board,previous){
+    const next={...board};delete next.previous;
+    if(!board?.sessionId||board.sessionId!==previous?.sessionId||!Number.isFinite(board.at)||!Number.isFinite(previous.at)||previous.at>=board.at||board.at-previous.at>300000)return next;
+    if(!['ours','theirs'].every(side=>board[side]?.length===5&&previous[side]?.length===5&&board[side].every((r,i)=>r.hero&&r.hero===previous[side][i]?.hero)))return next;
+    const snapshot={sessionId:previous.sessionId,at:previous.at};if(Number.isFinite(previous.clock))snapshot.clock=previous.clock;
+    for(const side of ['ours','theirs'])snapshot[side]=previous[side].map(r=>Object.fromEntries(['hero','lvl','k','d','a','cs','gold'].filter(f=>f==='hero'||Number.isFinite(r[f])).map(f=>[f,r[f]])));
+    next.previous=snapshot;return next;
+  }
   function resultOf(s){return [...(s.events||[])].reverse().find(e=>e.type==='match-result'&&e.sessionId===s.id&&['win','loss'].includes(e.outcome))||null;}
   function finish(s,outcome,who,at=Date.now()){
     if(!['win','loss'].includes(outcome))throw Error('Choose win or loss.');
@@ -111,7 +119,7 @@
     }
     return board;
   }
-  const api = { finish, resultOf, ROLES, clone, blank, normalize, validateSetup, fromPlan, observedGameTime, chooseLane, start, parseTime, objectiveStatus, objectiveEvent, validateBoard };
+  const api = { linkBoard, finish, resultOf, ROLES, clone, blank, normalize, validateSetup, fromPlan, observedGameTime, chooseLane, start, parseTime, objectiveStatus, objectiveEvent, validateBoard };
   root.SquadSession = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

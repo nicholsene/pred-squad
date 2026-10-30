@@ -55,3 +55,9 @@ const ended=M.finish(live,'win','a',2000);assert.equal(M.resultOf(ended).outcome
 const edited=M.finish(ended,'loss','a',3000);assert.equal(M.resultOf(edited).outcome,'loss');assert.equal(edited.finishedAt,2000);assert.equal(edited.events.length,ended.events.length+1);
 assert.equal(M.resultOf(M.normalize(JSON.parse(JSON.stringify(edited)))).outcome,'loss');assert.throws(()=>M.finish(live,'draw','a'));assert.throws(()=>M.finish(M.blank(),'win','a'));assert.equal(M.resultOf({...ended,id:'another'}),null);
 console.log('ok: manual results persist, append edits and preserve finish time without crossing sessions');
+
+const prior={sessionId:'s',at:100,clock:5,ours:Array.from({length:5},(_,i)=>({hero:'our'+i,lvl:10,k:1,d:2,cs:100,items:['secret-not-history'],readConfidence:{}})),theirs:Array.from({length:5},(_,i)=>({hero:'their'+i,lvl:10})),previous:{deep:true}};
+const linked=M.linkBoard({...M.clone(prior),at:200,clock:6},prior);assert.equal(linked.previous.at,100);assert.equal(linked.previous.previous,undefined);assert.equal(linked.previous.ours[0].items,undefined);assert.equal(linked.previous.ours[0].readConfidence,undefined);
+assert.equal(M.linkBoard({...linked,at:200},linked).previous,undefined);assert.equal(M.linkBoard({...linked,sessionId:'other',at:300},linked).previous,undefined);assert.equal(M.linkBoard({...linked,at:300001+linked.at},linked).previous,undefined);
+assert.equal(JSON.parse(JSON.stringify(linked)).previous.ours[0].d,2);assert.equal(prior.previous.deep,true);
+console.log('ok: bounded same-match scan history retains numeric evidence without recursive photos or confidence payloads');
