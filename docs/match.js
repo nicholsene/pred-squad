@@ -24,6 +24,9 @@
   let previousScan = null, scanBusy = false, pendingPlanOpen = false;
   let room = null;          // { code, client, channel }
   let me = store.get("squad-me", "");
+  const archive=window.ScanArchive?.create({url:SUPABASE_URL,key:SUPABASE_KEY,onStatus:updateArchiveStatus});
+  function updateArchiveStatus(s){const el=document.querySelector('#scan-archive-status');if(el)el.textContent=s.error||((s.enabled?'Saving photos privately':'Photo saving paused')+' · '+s.saved+' saved · '+s.waiting+' waiting');const toggle=document.querySelector('#scan-archive-enabled');if(toggle)toggle.checked=s.enabled;}
+  function archiveUpdate(file,patch){void archive?.update(file?._archiveId,patch);}
   let tick = null, lastLifecycleStage = null, intakeMode = "scan", draftGameTime = null, draftGameSession = S.id;
   const planningUI=window.SquadPlanning.create({app:A,getState:()=>S,getMe:()=>me,commit,toast,exclusiveScan});
   const optimizerUI=window.SquadOptimizerUI.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast});
@@ -43,7 +46,7 @@
   function receive(data) {
     if (!room || data.version < room.version) return;
     room.version = data.version; room.base = M.normalize(data.state);
-    for(const [id,notice] of scanAnnouncements){if((data.state?._operations||[]).includes(id)){scanAnnouncements.delete(id);if(notice.sessionId===data.state.id&&notice.roomCode===room.code)queueMicrotask(()=>{if(room?.code!==notice.roomCode||S.id!==notice.sessionId||me!==notice.who||room.pending.some(p=>!(room.base._operations||[]).includes(p.id))||scanEvidenceKey(S)!==notice.evidence)return;matchFocus?.noticeScan(notice.kind,id);});}}
+    for(const [id,notice] of scanAnnouncements){if((data.state?._operations||[]).includes(id)){scanAnnouncements.delete(id);void archive?.update(notice.archiveId,{outcome:'accepted-room',operationId:id});if(notice.sessionId===data.state.id&&notice.roomCode===room.code)queueMicrotask(()=>{if(room?.code!==notice.roomCode||S.id!==notice.sessionId||me!==notice.who||room.pending.some(p=>!(room.base._operations||[]).includes(p.id))||scanEvidenceKey(S)!==notice.evidence)return;matchFocus?.noticeScan(notice.kind,id);});}}
     S = applyChanges(M.clone(room.base), room.pending.filter(p => !(data.state?._operations || []).includes(p.id)).flatMap(p => p.changes)); persist(); render();
   }
   async function refreshRoom() {
@@ -209,7 +212,8 @@
   function savedScan(changes,ticket,kind="scoreboard"){
     requireScan(ticket);
     const id=commit(changes,ticket.version??true);
-    if(room)scanAnnouncements.set(id,{sessionId:ticket.sessionId,roomCode:ticket.roomCode,kind,who:me,evidence:scanEvidenceKey(S)});
+    void archive?.update(ticket.archiveId,{outcome:room?'awaiting-room-ack':'applied-local',appliedKind:kind,operationId:id});
+    if(room)scanAnnouncements.set(id,{archiveId:ticket.archiveId,sessionId:ticket.sessionId,roomCode:ticket.roomCode,kind,who:me,evidence:scanEvidenceKey(S)});
     else matchFocus?.noticeScan(kind,crypto.randomUUID());
     return id;
   }
@@ -217,6 +221,7 @@
   const photoAbort=()=>new DOMException("Photo scan cancelled.","AbortError");
   function requirePhoto(job){if(activePhoto!==job||job.controller.signal.aborted)throw photoAbort();requireScan(job.ticket);}
   function finishPhoto(job){
+    if(!job.released){job.released=true;archive?.release();}
     if(job.url){job.preview.removeAttribute("src");URL.revokeObjectURL(job.url);job.url=null;}
     if(job.image){job.image.width=job.image.height=0;job.image=null;}
     if(activePhoto!==job)return;
@@ -224,7 +229,7 @@
     const box=$("#scan-progress");box.classList.remove("photo-scan-progress");box.innerHTML='<div class="bar-meter"><i></i></div><span class="muted"></span>';
   }
   function cancelPhoto(message="Photo scan cancelled.",quiet=false){
-    const job=activePhoto;if(!job)return;job.ticket.cancelled=true;job.controller.abort();window.FreeOCR?.cancel();finishPhoto(job);if(!quiet)matchFocus?.scanFeedback(message);
+    const job=activePhoto;if(!job)return;void archive?.update(job.ticket.archiveId,{outcome:'cancelled'});job.ticket.cancelled=true;job.controller.abort();window.FreeOCR?.cancel();finishPhoto(job);if(!quiet)matchFocus?.scanFeedback(message);
   }
   function photoProgress(job,message,fraction){
     if(activePhoto!==job||job.controller.signal.aborted)return;
@@ -234,7 +239,8 @@
   function beginPhoto(file){
     if(scanBusy&&!activePhoto){toast("Wait for the current scan to finish.");return null;}cancelPhoto("",true);
     const job={ticket:scanTicket(file),controller:new AbortController(),url:null,image:null};
-    const box=$("#scan-progress");box.innerHTML='<img class="photo-scan-preview" alt="Selected game photo"><div><span class="photo-scan-message" role="status">Opening photo…</span><div class="bar-meter"><i></i></div></div><button type="button" class="chip">Cancel</button>';
+    archive?.hold();file._archiveId=archive?.capture(file,{sessionId:job.ticket.sessionId,player:me,patch:A.itemPatch,engine:'paddleocr-js@0.4.2/PP-OCRv6_tiny',source:file._captureSource||'upload',observedAt:file._capturedAt,observedAtEstimated:file._captureSource!=='camera'});job.ticket.archiveId=file._archiveId;
+    const box=$("#scan-progress");box.innerHTML='<img class="photo-scan-preview" alt="Selected game photo"><div><span class="photo-scan-message" role="status">Opening photo…</span><small class="photo-save-notice">'+(archive?.status().enabled?'Photo queued for private scanner review':'Photo saving paused')+'</small><div class="bar-meter"><i></i></div></div><button type="button" class="chip">Cancel</button>';
     job.preview=box.querySelector("img");job.message=box.querySelector("span");job.bar=box.querySelector("i");
     if(file instanceof Blob){job.url=URL.createObjectURL(file);job.preview.src=job.url;}
     else{const c=document.createElement("canvas"),w=file.width||1,h=file.height||1,s=Math.min(96/w,72/h);c.width=Math.max(1,Math.round(w*s));c.height=Math.max(1,Math.round(h*s));c.getContext("2d").drawImage(file,0,0,c.width,c.height);job.preview.src=c.toDataURL("image/jpeg",.65);c.width=c.height=0;}
@@ -250,7 +256,7 @@
         if(!bitmap){fallback=await new Promise((resolve,reject)=>{const img=new Image(),timer=setTimeout(()=>stop(new Error("Could not open this photo. Try a JPEG or PNG.")),15000),clear=()=>{clearTimeout(timer);img.onload=img.onerror=null;signal.removeEventListener("abort",abort);},stop=error=>{clear();img.src="";reject(error);},abort=()=>stop(photoAbort());img.onload=()=>{clear();resolve(img);};img.onerror=()=>stop(new Error("Could not open this photo. Try a JPEG or PNG."));signal.addEventListener("abort",abort,{once:true});img.src=job.url;});source=fallback;}
       }
       check();const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;if(!(w>0&&h>0))throw new Error("Photo dimensions are invalid.");
-      const scale=Math.min(1,2048/w,2048/h),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));canvas.getContext("2d").drawImage(source,0,0,canvas.width,canvas.height);photoTime.copy(file,canvas);return canvas;
+      const scale=Math.min(1,2048/w,2048/h),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));canvas.getContext("2d").drawImage(source,0,0,canvas.width,canvas.height);photoTime.copy(file,canvas);canvas._archiveId=file._archiveId;return canvas;
     }finally{bitmap?.close();if(fallback)fallback.src="";}
   }
   function scanProgress(id,message,fraction){
@@ -259,7 +265,7 @@
     box.querySelector("i").style.width=Math.round((fraction||0)*100)+"%";
   }
   function hideScanProgress(){ $("#scan-progress").hidden=true;$("#board-progress").hidden=true; }
-  function scanFeedback(message){hideScanProgress();matchFocus?.scanFeedback(message);toast(message);}
+  function scanFeedback(message){void archive?.update(activePhoto?.ticket.archiveId,{outcome:'not-applied',feedback:message});hideScanProgress();matchFocus?.scanFeedback(message);toast(message);}
   function setupFromRead(res){
     const setup=M.clone(S.setup),identified=new Set();
     for(const side of ["ours","theirs"])for(const role of ROLES){
@@ -275,13 +281,36 @@
   async function runScan(file,{handsFree=false,ocr=null,signal,guard=()=>{}}={}){
     const ticket=scanTicket(file);
     try{
-      const res=ocr?(window.FreeScan.loading?.(ocr,{heroes:A.heroes,squad:A.squad.players})||{ours:{},theirs:{},issues:["Loading screen unclear."]}):await window.LoadingScan.scan(file,A.heroes,A.squad.players,(m,f)=>scanProgress("#scan-progress",m,f));
+      let res;
+      if(ocr){
+        const context={heroes:A.heroes,squad:A.squad.players};
+        res=window.FreeScan.loading?.(ocr,context);
+        const cells=!res?window.FreeScan.loadingCells?.(ocr,context):[];
+        if(cells?.length){
+          const sheet=window.FreeOCR.atlas(file,cells);
+          try{
+            const enlarged=await window.FreeOCR.read(sheet.canvas,{signal,onProgress:(m,f)=>scanProgress("#scan-progress",m.startsWith("Reading")?"Reading enlarged hero and player labels…":m,f)});guard();
+            const mapped=Object.values(sheet.reads(enlarged)).flatMap(r=>r.items.filter(i=>i.sourcePoly).map(i=>({...i,poly:i.sourcePoly})));
+            archiveUpdate(file,{loadingRetry:{items:mapped}});
+            res=window.FreeScan.loading({...ocr,items:[...ocr.items,...mapped]},context);
+          }finally{sheet.canvas.width=sheet.canvas.height=0;}
+        }
+        res||={ours:{},theirs:{},issues:["Loading screen unclear."]};
+      }else res=await window.LoadingScan.scan(file,A.heroes,A.squad.players,(m,f)=>scanProgress("#scan-progress",m,f));
       guard();
       requireScan(ticket);
       const setup=setupFromRead(res),quality=window.ScanQuality.assess("loading",res,{heroes:A.heroes,items:A.items,squad:A.squad.players});
+      archiveUpdate(file,{parsed:res,quality});
       if(quality.auto&&!M.validateSetup(setup).length){
-        previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
-        guard();savedScan([{path:["setup"],value:setup}],ticket,"loading");hideScanProgress();toast("Lineup updated.");
+        const changed=ROLES.some(r=>["ours","theirs"].some(side=>S.setup[side]?.[r]?.hero!==setup[side]?.[r]?.hero));
+        const newMatch=S.stage==="live"||S.stage==="finished"||changed&&!!S.board;
+        let changes=[{path:["setup"],value:setup}];
+        if(newMatch){
+          const next=blank();
+          for(const side of ["ours","theirs"])for(const role of ROLES){const row=res[side]?.[role];next.setup[side][role]={hero:row.hero,...(side==="ours"?{who:row.who||""}:{})};}
+          changes=Object.entries(next).map(([k,value])=>({path:[k],value}));previousScan=null;lastBoardRead=null;
+        }else previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
+        guard();savedScan(changes,ticket,"loading");hideScanProgress();toast(newMatch?"New match lineup read. Old match data cleared.":"Lineup updated.");
       }else if(handsFree){
         scanFeedback("Lineup unclear. Fill the frame with the loading screen and take another photo.");
       }else{
@@ -352,6 +381,7 @@
       let quality;
       if(handsFree){const automatic=window.ScanQuality.automaticBoard(res,options);res=automatic.result;quality=automatic.quality;}
       else quality=window.ScanQuality.assess("scoreboard",res,options);
+      archiveUpdate(file,{parsed:res,quality});
       const board={at:file._capturedAt,capturedAt:file._capturedAt,clock:detected?.clockRead?.seconds??(window.ScanQuality.reliability(res.readConfidence?.clock,res.clock)>=90?res.clock:photoTime.gameTime(file,S.clock.startedAt)),sessionId:S.id,sourceLayout:res.sourceLayout,ours:res.ours,theirs:res.theirs};
       lastBoardRead={board:M.clone(board),issues:res.issues||[],sessionId:S.id};
       if(quality.auto){
@@ -380,14 +410,16 @@
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       requirePhoto(job);job.image=await decodePhoto(file,job);requirePhoto(job);
       const ocr=await window.FreeOCR.read(job.image,{signal:job.controller.signal,onProgress:(m,f)=>photoProgress(job,m,f)});
+      archiveUpdate(file,{ocr,imageDimensions:{width:job.image.width,height:job.image.height}});
       requirePhoto(job);photoProgress(job,"Checking the photo…",.92);
-      const detected=forcedKind?{kind:forcedKind}:window.PhotoRouter.classify(ocr.lines,{heroes:A.heroes,items:A.items,width:job.image.width,height:job.image.height});
+      const detected=forcedKind?{kind:forcedKind}:window.PhotoRouter.classify(ocr.lines,{heroes:A.heroes,items:A.items,width:job.image.width,height:job.image.height,visualMap:window.PhotoRouter.mapColors?.(job.image)===true});
+      archiveUpdate(file,{detected,outcome:'read'});
       const options={handsFree:true,ocr,signal:job.controller.signal,guard:()=>requirePhoto(job)};
       if(detected.kind==="scoreboard"||detected.kind==="unknown")await runBoardScan(job.image,detected,options);
       else if(detected.kind==="loading")await runScan(job.image,options);
       else if(detected.kind==="build"||detected.kind==="shop")scanFeedback("Item shop recognized. Photograph the scoreboard to update live player stats.");
       else scanFeedback("HUD recognized. Open the scoreboard and take a photo to update player stats.");
-    }catch(e){if(activePhoto===job&&!job.controller.signal.aborted)scanFeedback(currentScan(job.ticket)?(e.message||"Could not read this photo. Try a closer scoreboard photo."):"Match changed. Take a new photo for this match.");}
+    }catch(e){archiveUpdate(file,{outcome:job.controller.signal.aborted?'cancelled':'failed',error:String(e.message||e)});if(activePhoto===job&&!job.controller.signal.aborted)scanFeedback(currentScan(job.ticket)?(e.message||"Could not read this photo. Try a closer scoreboard photo."):"Match changed. Take a new photo for this match.");}
     finally{finishPhoto(job);}
   }
 
@@ -585,7 +617,7 @@
     const laneButtons=pregame?'<div class="quick-lanes" role="group" aria-label="Your lane">'+ROLES.map(r=>'<button type="button" data-quick-lane="'+r+'" aria-pressed="'+(ownRole===r)+'">'+esc(roleName(r))+'</button>').join('')+'</div>':'';
     const hero=pregame&&own?'<label class="quick-hero">Your hero<select id="quick-hero" aria-label="Your hero"><option value="">Choose hero</option>'+A.heroes.map(h=>'<option value="'+esc(h.slug)+'" '+(own.hero===h.slug?'selected':'')+'>'+esc(h.name)+'</option>').join('')+'</select></label>':'';
     const items=pregame&&plan?'<ol class="quick-build-items">'+plan.items.map(n=>'<li>'+planningUI.icon(A.items.find(i=>i.name===n),32)+'<span>'+esc(planningUI.itemName(n))+'</span></li>').join('')+'</ol>':'';
-    const intake=S.stage==="finished"?'':'<div class="intake-switch" role="group" aria-label="Build input"><button type="button" data-intake="scan" aria-pressed="'+(intakeMode==="scan")+'">Scan scoreboard &amp; builds</button><button type="button" data-intake="manual" aria-pressed="'+(intakeMode==="manual")+'">Build manually</button></div><div class="intake-panel">'+(intakeMode==="scan"?'<p class="note">Scan the scoreboard and equipment, then review the suggested response.</p><button class="chip ghost" type="button" id="prep-board">Scan scoreboard &amp; builds</button>':'<p class="note">Choose and review your six intended items. These stay separate from owned equipment.</p><button class="chip ghost" type="button" id="prep-manual">Choose build items</button>')+'</div>';
+    const intake=S.stage==="finished"?'':'<div class="intake-switch" role="group" aria-label="Build input"><button type="button" data-intake="scan" aria-pressed="'+(intakeMode==="scan")+'">Photo</button><button type="button" data-intake="manual" aria-pressed="'+(intakeMode==="manual")+'">Build manually</button></div><div class="intake-panel">'+(intakeMode==="scan"?'<p class="note" id="prep-board">Use the camera button below to scan a game screen. Readable stats update automatically.</p>':'<p class="note">Choose and review your six intended items. These stay separate from owned equipment.</p><button class="chip ghost" type="button" id="prep-manual">Choose build items</button>')+'</div>';
     el.innerHTML='<b>'+(pregame?'Recommended build':S.stage==="live"?'Match in progress':'Match finished')+'</b>'+(pregame?'<p class="note">Choose your lane, review your build and start tracking the game.</p>':'')+laneButtons+hero+items+intake+(issues.length?'<p class="warn">'+issues.map(esc).join(' ')+'</p>':'')+(pregame?'<label class="quick-game-time">Game time now<input id="game-time" aria-label="Game time now" inputmode="numeric" value="'+esc(time)+'" placeholder="0:00"></label><p class="note">Enter the time already showing in game. A reviewed screenshot clock is used automatically.</p>':'')+'<div class="lifecycle-actions">'+(pregame?'<button type="button" class="chip cta" id="clock-start">Start game</button>':'')+(S.stage==="live"?'<button type="button" class="chip" id="match-finish">Finish match</button>':'')+(previousScan?'<button type="button" class="chip ghost" id="undo-scan">Undo last scan</button>':'')+'</div>';
     el.querySelectorAll('[data-intake]').forEach(b=>b.onclick=()=>{intakeMode=b.dataset.intake;renderLifecycle();});
     el.querySelectorAll('[data-quick-lane]').forEach(b=>b.onclick=async()=>{try{
@@ -594,7 +626,7 @@
     }catch(e){toast(e.message);}});
     const hs=$("#quick-hero");if(hs)hs.onchange=()=>{const setup=M.clone(S.setup);setup.ours[ownRole].hero=hs.value;const bad=M.validateSetup(setup).filter(s=>!s.startsWith("Choose a hero"));if(bad.length){toast(bad.join(" "));renderLifecycle();return;}commit([{path:["setup"],value:setup},{path:["stage"],value:"draft"}],true);};
     const timeInput=$("#game-time");if(timeInput)timeInput.oninput=()=>draftGameTime=timeInput.value;
-    const scan=$("#prep-board");if(scan)scan.onclick=()=>$("#auto-photo-file").click();
+
     const manual=$("#prep-manual");if(manual)manual.onclick=()=>planningUI.open(me);
     const start=$("#clock-start");if(start)start.onclick=startMatch;
     const undo=$("#undo-scan");if(undo)undo.onclick=()=>{const old=previousScan;if(Object.entries(old.after).some(([k,value])=>JSON.stringify(S[k])!==JSON.stringify(value)))return toast("Match changed since this scan. Correct the current values instead of undoing newer edits.");previousScan=null;commit(Object.entries(old.before).map(([k,value])=>({path:[k],value})),true);};
@@ -793,6 +825,8 @@
 
   // ---------- init ----------
   function init() {
+    window.__scanArchive=archive;
+    const archiveBox=document.createElement('div');archiveBox.id='scan-archive-tools';archiveBox.innerHTML='<h3>Scanner photo collection</h3><p>Photos are saved privately for review and scanner improvement. Recognition runs on your device. Uploads wait until scanning finishes.</p><label><input type="checkbox" id="scan-archive-enabled"> Save every scan photo</label><p id="scan-archive-status" role="status"></p><button type="button" id="scan-archive-retry" class="chip">Retry saving</button>';$('#tab-match').append(archiveBox);$('#scan-archive-enabled').onchange=e=>archive?.setEnabled(e.target.checked);$('#scan-archive-retry').onclick=()=>archive?.retry();if(archive)updateArchiveStatus(archive.status());
     const meSel = $("#me");
     meSel.innerHTML = `<option value="">Who are you?</option>` + A.squad.players.map(p => `<option value="${esc(p.key)}" ${p.key === me ? "selected" : ""}>${esc(p.label)}</option>`).join("");
     meSel.onchange = () => { me = meSel.value; store.set("squad-me", me); if (room) room.channel.track({ who: me || "guest", at: Date.now() }); render(); };

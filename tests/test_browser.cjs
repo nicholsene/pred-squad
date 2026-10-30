@@ -27,7 +27,7 @@ try{
      lock.release=async()=>{if(lock.released)return;lock.released=true;window.__wakeReleases++;lock.dispatchEvent(new Event("release"));};return lock;
    }}});
  });
- await page.goto(`http://127.0.0.1:${server.address().port}/`);
+ await page.addInitScript(()=>localStorage.setItem('squad-save-scans','off'));await page.goto(`http://127.0.0.1:${server.address().port}/`);
  await page.locator('[data-go="picks"]').click();
  await page.locator('[data-apply="0"]').click();
  const expected=await page.evaluate(()=>window.SquadHandoff.pending);
@@ -52,7 +52,7 @@ try{
  await page.locator('[data-intake="manual"]').click();
  await page.locator('#prep-manual').click();await page.locator('#build-save').waitFor();
  await page.locator('dialog [data-close]').click();
- await page.locator('[data-intake="scan"]').click();await page.locator('#prep-board').waitFor();
+ await page.locator('[data-intake="scan"]').click();await page.locator('#prep-board').waitFor({state:'attached'});assert.equal(await page.locator('#quick-scan').isVisible(),true);
  fs.mkdirSync(path.resolve(__dirname,'../.test-artifacts'),{recursive:true});
  await page.setViewportSize({width:320,height:760});
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'quick start must fit a narrow phone');
