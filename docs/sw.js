@@ -1,6 +1,6 @@
 /* Offline support: app shell is network-first (cache fallback), data is network-first with the
    last copy kept so the app still opens with the most recent stats offline. */
-const SHELL = "squad-shell-v17";
+const SHELL = "squad-shell-v18";
 const DATA = "squad-data-v1";
 const SHELL_FILES = ["./", "index.html", "style.css", "app.js", "engine.js", "session.js", "minimap.js", "insights.js", "scan.js", "photo-prep.js", "camera.js", "photo-time.js", "photo-router.js", "scan-quality.js", "match-focus.js", "match-focus.css", "match.js", "itemlab.js", "mechanics.js", "profiles.js", "optimizer.js", "optimizer-ui.js", "buildplans.js", "counterbuild.js", "planning.js", "buildscan.js", "itemvision.js", "scoreboard.js", "sb-digits.json", "manifest.webmanifest",
   "icons/icon-192.png", "icons/apple-touch-icon.png"];

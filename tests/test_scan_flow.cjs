@@ -22,9 +22,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  const png=Buffer.from(await page.evaluate(()=>{const c=document.createElement("canvas");c.width=c.height=4;return c.toDataURL().split(",")[1];}),"base64");
  const install=async(mode="auto")=>page.evaluate(({heroes,mode})=>{
    window.PhotoRouter.detect=async()=>({kind:"scoreboard",clockRead:{seconds:590}});
-   window.ScanQuality.assess=()=>({auto:true,score:90,issues:[],inventoryReady:{ours:Array(5).fill(false),theirs:Array(5).fill(false)}});
+   
    const result={sourceLayout:"live",ours:heroes.slice(0,5).map((hero,i)=>({hero,lvl:12,k:2,d:3,a:4,cs:100+i,gold:null,items:["Unknown"]})),theirs:heroes.slice(5).map((hero,i)=>({hero,lvl:13,k:4,d:1,a:2,cs:80+i,gold:null})),issues:[]};
-   window.ScoreboardScan={scan:mode==="deferred"?()=>new Promise(r=>window.__finishOCR=()=>r(result)):async()=>result};
+   const ev=value=>({value,source:"measured-ocr",metrics:{ocr:.99},resolved:true});
+   result.readConfidence={layout:ev("role-order"),ownTeam:{...ev("left"),source:"gamertag",metrics:{ocr:.99,match:1}}};
+   for(const side of ["ours","theirs"])for(const row of result[side]){row.readConfidence={};for(const f of ["hero","lvl","k","d","a","cs"])row.readConfidence[f]=ev(row[f]);}
+   if(mode==="partial")result.ours[0].readConfidence.k.metrics.ocr=.4;
+   if(mode==="empty"){result.ours=[];result.theirs=[];}
+   window.__ocrCalls=0;window.__ocrDone=false;
+   window.ScoreboardScan={scan:mode==="deferred"?()=>new Promise(r=>window.__finishOCR=()=>r(result)):async()=>{window.__ocrCalls++;window.__ocrDone=true;return result;}};
  },{heroes:fixture.heroes,mode});
  const upload=()=>page.locator("#auto-photo-file").setInputFiles({name:"scan.png",mimeType:"image/png",buffer:png});
  await install();await upload();await page.waitForFunction(()=>JSON.parse(localStorage.getItem("squad-match")).board);
@@ -36,6 +42,22 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  assert(!JSON.stringify(board).includes("readConfidence")&&!JSON.stringify(board).includes("data:image"));
  assert(await page.evaluate(()=>window.__said.length>0),"reading and accepted update can use speech");
  await page.locator("#me").selectOption("");assert.equal(await page.locator(".mf-lane.mine").count(),0,"unassigned identity must not highlight any lane as yours");await page.locator("#me").selectOption(fixture.who);
+ // An uncertain screen is verified by the scoreboard reader without asking for its type.
+ await install("partial");await page.evaluate(()=>PhotoRouter.detect=async()=>({kind:"unknown"}));await upload();
+ await page.waitForFunction(()=>window.__ocrDone&&JSON.parse(localStorage.getItem("squad-match")).board.ours[0].k===null);
+ assert.equal(await page.locator("dialog.screen-choice").count(),0);
+ assert.equal(await page.locator("#scan-review").isHidden(),true);
+ board=await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board);
+ const accepted=board.scanId;
+ // Unreadable photos keep the saved snapshot and request a retake, never data entry.
+ await install("empty");await upload();await page.waitForFunction(()=>window.__ocrDone);
+ await page.waitForFunction(()=>document.querySelector("#mf-age")?.textContent.includes("retake"));
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board.scanId),accepted);
+ assert.equal(await page.locator("#scan-review").isHidden(),true);assert.equal(await page.locator("#map-review").isHidden(),true);
+ // A HUD route must never open the old objective/crop form.
+ await page.evaluate(()=>PhotoRouter.detect=async()=>({kind:"minimap"}));await upload();
+ await page.waitForFunction(()=>document.querySelector("#mf-age")?.textContent.includes("HUD recognized"));
+ assert.equal(await page.locator("#map-review").isHidden(),true);
  // Adjusting the match clock during OCR invalidates its captured observation context.
  const oldScan=board.scanId;await install("deferred");await upload();await page.waitForFunction(()=>typeof window.__finishOCR==="function");
  await page.evaluate(()=>document.querySelector('[data-adj="10"]').click());await page.evaluate(()=>window.__finishOCR());await page.waitForTimeout(100);
@@ -45,21 +67,22 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  page.once("dialog",d=>d.accept());await page.evaluate(()=>document.querySelector("#match-clear").click());
  await page.evaluate(()=>window.__finishOCR());await page.waitForTimeout(100);
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
- // Loading review must not silently assign a player from a weak gamertag.
+ await page.evaluate(()=>window.__matchFocus.readUpdate());assert.match(await page.evaluate(()=>window.__said.at(-1)),/Scan the scoreboard/);
+ await page.evaluate(()=>window.__matchFocus.scanFeedback("Take another photo."));assert.equal(await page.locator(".mf-draft-notice").isVisible(),true);
+ // A weak loading photo must request a retake without opening a manual lineup form.
  await page.evaluate(({S,who})=>{localStorage.setItem("squad-match",JSON.stringify({...S,clock:{startedAt:Date.now()-600000}}));localStorage.setItem("squad-me",JSON.stringify(who));},fixture);
  await page.reload();await page.waitForFunction(()=>window.__matchFocus);await page.locator('[data-go="match"]').click();
  await page.evaluate(({heroes,who})=>{
    PhotoRouter.detect=async()=>({kind:"loading"});ScanQuality.assess=()=>({auto:false,score:20,issues:[]});
    LoadingScan.scan=async()=>({ours:Object.fromEntries(SquadEngine.ROLES.map((r,i)=>[r,{hero:heroes[i],...(i===0?{who,readConfidence:{who:{value:who,source:"gamertag",metrics:{ocr:.2,match:1},resolved:true}}}:{})}])),theirs:Object.fromEntries(SquadEngine.ROLES.map((r,i)=>[r,{hero:heroes[i+5]}])),issues:[]});
  },{heroes:fixture.heroes,who:fixture.who});
- await upload();await page.locator("#scan-apply").waitFor();await page.locator("#scan-apply").click();
+ await upload();await page.waitForFunction(()=>document.querySelector("#mf-age")?.textContent.includes("Lineup unclear"));assert.equal(await page.locator("#scan-review").isHidden(),true);
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).setup.ours.OFFLANE.who),"");
- // A shop route exposes name candidates without assigning them to owned slots.
+ // A shop route is recognized without opening an input form or claiming ownership.
  await page.evaluate(({S,who})=>{localStorage.setItem("squad-match",JSON.stringify({...S,clock:{startedAt:Date.now()-600000}}));localStorage.setItem("squad-me",JSON.stringify(who));},fixture);
  await page.reload();await page.waitForFunction(()=>window.__matchFocus);await page.locator('[data-go="match"]').click();
  await page.evaluate(()=>{PhotoRouter.detect=async()=>({kind:"build",lines:[[{t:"Storm",c:99},{t:"Breaker",c:99}]]});});
- await upload();await page.locator("#build-save").waitFor();assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
- assert.equal(await page.locator("#build-confirm").isChecked(),false);await page.locator("dialog [data-close]").click();
+ await upload();await page.waitForFunction(()=>document.querySelector("#mf-age")?.textContent.includes("Item shop recognized"));assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);assert.equal(await page.locator("dialog[open]").count(),0);
  // Shared speech is emitted only after the exact operation is acknowledged.
  await page.addInitScript(({seed})=>{
    if(!localStorage.getItem("test-room-enabled"))return;
