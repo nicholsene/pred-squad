@@ -103,6 +103,7 @@ try{
  await page.locator('[data-time="fangtooth"]').fill("2:00");
  await page.locator('[data-countdown="fangtooth"]').click();
  await page.waitForFunction(()=>JSON.parse(localStorage.getItem("squad-match")).objectives.fangtooth?.respawnAt>=120);
+ assert(await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('squad-match')),e=s.objectives.fangtooth;return e.confirmed===true&&e.sessionId===s.id&&Number.isFinite(e.observedAt);}), 'objective observations retain current-match provenance');
  await closeDetails();await page.reload();await page.waitForFunction(()=>window.__matchFocus);await details('objectives');await page.waitForFunction(()=>document.querySelector('#objectives')?.innerText.includes('Respawns in'));
  assert.match(await page.locator('#objectives').innerText(),/Respawns in/);await closeDetails();
  // Uncertain automatic results leave state unchanged; manual review remains opt-in.

@@ -7,7 +7,7 @@ assert.equal(E.laneLead({a:8},{a:0}).score,5);assert.equal(E.laneLead({a:8},{a:0
 assert.equal(E.laneLead({lvl:0},{lvl:10}).coverage,0);
 assert.equal(E.laneLead(a,b).coverage,100);assert(E.laneLead({...a,lvl:13},b).score>E.laneLead(a,b).score);
 const setup={ours:{},theirs:{}},board={at:1000,ours:[],theirs:[]};E.ROLES.forEach((r,i)=>{setup.ours[r]={hero:'our'+i,who:i===0?'me':''};setup.theirs[r]={hero:'their'+i};board.ours.push({...a,hero:'our'+i});board.theirs.push({...b,hero:'their'+i});});
-const run=()=>E.liveStrategy(board,setup,'me',{now:1001});assert.equal(run().priority,'Use your level lead');assert.match(run().lane,/positions, health and cooldowns/);
+const run=()=>E.liveStrategy(board,setup,'me',{now:1001});assert.equal(run().priority,'Use your level lead');assert.match(run().nextPush.join(' '),/positions, health and cooldowns/);
 board.ours[0].lvl=9;assert.equal(run().priority,'Stay back and recover');delete board.ours[0].lvl;assert.match(run().reason,/unread/);assert.doesNotMatch(run().lane,/outlevel/);
 assert.equal(E.liveStrategy(board,setup,'me',{now:181001}).fresh,false);setup.ours.OFFLANE.hero='changed';assert.equal(run().fresh,false);
 console.log('ok: weighted evidence, missing measurements, role weights, stale guards and actionable strategy');

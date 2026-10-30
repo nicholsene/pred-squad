@@ -24,10 +24,12 @@ jobs:
       - run: python tests/test_refresh.py
       - run: node tests/test_engine.js
       - run: node tests/test_live_strategy.js
+      - run: node tests/test_tactical_updates.js
       - run: node tests/test_session.js
       - run: node tests/test_counterbuild.js
       - run: node tests/test_itemvision.js
       - run: node tests/test_buildplans.js
+      - run: node tests/test_starting_suggestions.js
       - run: node tests/test_buildscan.js
       - run: node tests/test_profiles.js
       - run: node tests/test_mechanics.js
@@ -51,4 +53,5 @@ jobs:
       - run: node tests/test_free_ocr.cjs
       - run: node tests/test_numeric_ocr.cjs
       - run: node tests/test_match_layout.cjs
+      - run: node tests/test_starting_suggestions.cjs
       - run: node tests/test_camera.cjs

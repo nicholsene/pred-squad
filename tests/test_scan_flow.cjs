@@ -67,6 +67,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
    await upload();await page.waitForFunction(id=>JSON.parse(localStorage.getItem('squad-match')).board.scanId!==id,previous);assert.equal(await page.locator('#scan-review').isHidden(),true);
  }
  await page.evaluate(()=>NumericOCR.read=__realNumberRead);
+ assert(await page.evaluate(()=>{const b=JSON.parse(localStorage.getItem('squad-match')).board;return b.previous?.sessionId===b.sessionId&&b.previous.ours[0].cs===100&&!b.previous.previous&&!b.previous.ours[0].items;}),'accepted scan stores bounded prior observations for tactical comparisons');
+ // New photographs are not by themselves a reason to announce a different plan.
+ const strategySpeech=()=>page.evaluate(()=>__said.filter(s=>s.startsWith('Main priority:')).length);
+ assert.equal(await strategySpeech(),1,'identical accepted scans do not repeat strategy speech');
+ const deathScan=async()=>{await install();await page.evaluate(()=>{const prepare=FreeScan.prepareBoard;FreeScan.prepareBoard=read=>{const p=prepare(read),r=p.result.ours[4];r.d=4;r.readConfidence.d.value=4;return p;};});const id=await page.evaluate(()=>JSON.parse(localStorage.getItem('squad-match')).board.scanId);await upload();await page.waitForFunction(id=>JSON.parse(localStorage.getItem('squad-match')).board.scanId!==id,id);};
+ await deathScan();assert.equal(await strategySpeech(),2,'an observed death changes the next-trip plan once');
+ assert.doesNotMatch(await page.locator('.mf-tactics h2').innerText(),/repeat deaths/i,'one death is never counted twice during render and speech');
+ await deathScan();assert.equal(await strategySpeech(),2,'another photo of the same death counter keeps the plan');
+ assert.match(await page.locator('#mf-age').innerText(),/plan unchanged/);
  await page.locator("#me").selectOption("");assert.equal(await page.locator(".mf-lane.mine").count(),0,"unassigned identity must not highlight any lane as yours");await page.locator("#me").selectOption(fixture.who);
  // An uncertain screen is verified by the scoreboard reader without asking for its type.
  await install("partial");await page.evaluate(()=>PhotoRouter.classify=()=>({kind:"unknown"}));await upload();
