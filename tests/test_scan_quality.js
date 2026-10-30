@@ -26,3 +26,14 @@ b=board();b.ours[0].who='alice';b.ours[0].readConfidence.who={...ev('alice','gam
 b.ours[0].readConfidence.who.metrics.ocr=.4;assert(!Q.assess('scoreboard',b,{...opts,squad:[{key:'alice'}]}).auto);
 b.ours[0].readConfidence.who.metrics.ocr=.99;b.ours[0].readConfidence.who.disputed=true;assert(!Q.assess('scoreboard',b,{...opts,squad:[{key:'alice'}]}).auto);
 console.log('ok: all supplied player assignments require reliable exact squad identity');
+
+b=board();b.ours[0].k=59;b.ours[0].readConfidence.k=ev(59,'ocr',.4);
+b.ours[0].who='alice';b.ours[0].readConfidence.who={...ev('alice','gamertag',.4),metrics:{ocr:.4,match:1}};
+let partial=Q.automaticBoard(b,{...opts,squad:[{key:'alice'}]});
+assert(partial.quality.auto);assert.equal(partial.result.ours[0].k,null);assert.equal(partial.result.ours[0].who,undefined);assert.equal(partial.result.ours[0].cs,93);assert.equal(b.ours[0].k,59,'sanitizing must not mutate the OCR result');
+b.ours[1].readConfidence.hero.metrics.ocr=.7;assert(!Q.automaticBoard(b,opts).quality.auto,'partial numbers never relax hero evidence');
+b=board();b.readConfidence.layout.resolved=false;assert(!Q.automaticBoard(b,opts).quality.auto);
+b=board();b.readConfidence.ownTeam.metrics.match=.9;assert(!Q.automaticBoard(b,opts).quality.auto);
+b=board();for(const side of ['ours','theirs'])for(const row of b[side])for(const field of ['lvl','k','d','a','cs'])row.readConfidence[field].metrics.ocr=.4;
+assert(!Q.automaticBoard(b,opts).quality.auto,'no measured numbers means no automatic board');
+console.log('ok: hands-free partial values preserve structural gates and discard weak numbers and identities');

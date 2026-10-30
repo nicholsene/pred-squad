@@ -15,13 +15,13 @@ const pw=require(process.env.PLAYWRIGHT_MODULE||"playwright");
    await page.reload();await page.waitForFunction(()=>window.__matchFocus);
    const geometry=()=>page.evaluate(()=>{
     const f=document.querySelector("#match-focus"),n=document.querySelector("#lifecycle"),b=f.getBoundingClientRect(),nb=n.getBoundingClientRect(),start=document.querySelector("#clock-start")?.getBoundingClientRect(),main=f.querySelector(".mf-main").getBoundingClientRect();
-    return {height:innerHeight,width:innerWidth,focus:{top:b.top,bottom:b.bottom,height:b.height},mainHeight:main.height,cardHeight:nb.height,start:start&&{top:start.top,bottom:start.bottom},font:parseFloat(getComputedStyle(document.querySelector("#me")).fontSize),scale:visualViewport?.scale||1,motion:matchMedia("(prefers-reduced-motion:reduce)").matches,animation:getComputedStyle(document.querySelector("#tab-match")).animationName};
+    return {height:innerHeight,width:innerWidth,focus:{top:b.top,bottom:b.bottom,height:b.height},mainHeight:main.height,cardHeight:nb.height,start:start&&{top:start.top,bottom:start.bottom},font:parseFloat(getComputedStyle(document.querySelector("#me")).fontSize),scale:visualViewport?.scale||1,motion:matchMedia("(prefers-reduced-motion:reduce)").matches,animation:getComputedStyle(document.querySelector("#tab-match")).animationName,controls:[...f.querySelectorAll(".mf-top button,.mf-top select,.mf-tabs button")].filter(n=>n.getBoundingClientRect().width>0).map(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})};
    });
-   for(const viewport of [{width:430,height:932},{width:390,height:844},{width:844,height:390}]){
+   for(const viewport of [{width:430,height:932},{width:390,height:844},{width:320,height:640},{width:844,height:390}]){
     await page.setViewportSize(viewport);await page.locator('[data-go="record"]').click();await page.evaluate(()=>scrollTo(0,800));await page.locator('[data-go="match"]').click();
     await page.waitForTimeout(450);
     const g=await geometry();console.log(engine,"draft",JSON.stringify(g));
-    assert.equal(g.motion,false);assert(g.focus.height>g.height-200,"Match surface must be viewport-sized with motion enabled: "+JSON.stringify(g));
+    assert.equal(g.motion,false);assert(g.focus.top>=16,"Match must clear the phone status area");assert(g.controls.every(r=>r.left>=0&&r.right<=g.width+1&&r.top>=g.focus.top&&r.bottom<=g.focus.bottom+1),"all top controls fit: "+JSON.stringify(g));assert(g.focus.height>g.height-200,"Match surface must be viewport-sized with motion enabled: "+JSON.stringify(g));
     assert(g.mainHeight>g.height-250,"setup must not collapse: "+JSON.stringify(g));
     assert(g.cardHeight>180,"recommended build card must stay expanded: "+JSON.stringify(g));
     assert(g.start&&g.start.top>=g.focus.top&&g.start.bottom<=g.focus.bottom+1,"Start game must remain reachable: "+JSON.stringify(g));
@@ -38,6 +38,8 @@ const pw=require(process.env.PLAYWRIGHT_MODULE||"playwright");
    await page.reload();await page.waitForFunction(()=>window.__matchFocus);await page.locator('[data-go="match"]').click();await page.waitForTimeout(450);
    const live=await page.evaluate(()=>{const f=document.querySelector("#match-focus"),b=f.getBoundingClientRect();return {height:b.height,viewport:innerHeight,lanes:[...f.querySelectorAll(".mf-lane")].map(n=>{const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom};})};});
    assert(live.height>live.viewport-200);assert.equal(live.lanes.length,5);assert(live.lanes.every(n=>n.bottom>n.top&&n.top>=0&&n.bottom<live.viewport-65));
+   for(const viewport of [{width:320,height:640},{width:844,height:390}]){await page.setViewportSize(viewport);const g=await geometry();assert(g.controls.every(r=>r.left>=0&&r.right<=g.width+1&&r.top>=g.focus.top&&r.bottom<=g.focus.bottom+1),"live top controls must fit: "+JSON.stringify(g));}
+   await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.resolve(__dirname,"../.test-artifacts/match-live-"+engine+".png")});
    assert.deepEqual(errors,[]);await context.close();console.log("ok:",engine,"animated tab entry, scrolled navigation, draft/live bounds, containing-block isolation and iOS select sizing");
   }finally{await browser.close();}
  }}finally{await new Promise(r=>server.close(r));}

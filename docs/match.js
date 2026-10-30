@@ -218,6 +218,7 @@
     box.querySelector("i").style.width=Math.round((fraction||0)*100)+"%";
   }
   function hideScanProgress(){ $("#scan-progress").hidden=true;$("#board-progress").hidden=true; }
+  function scanFeedback(message){hideScanProgress();matchFocus?.scanFeedback(message);toast(message);}
   function setupFromRead(res){
     const setup=M.clone(S.setup),identified=new Set();
     for(const side of ["ours","theirs"])for(const role of ROLES){
@@ -230,7 +231,7 @@
     for(const role of ROLES)if(identified.has(setup.ours[role]?.who)&&res.ours?.[role]?.who!==setup.ours[role].who)setup.ours[role].who="";
     return setup;
   }
-  async function runScan(file){
+  async function runScan(file,{handsFree=false}={}){
     const ticket=scanTicket(file);
     try{
       const res=await window.LoadingScan.scan(file,A.heroes,A.squad.players,(m,f)=>scanProgress("#scan-progress",m,f));
@@ -239,18 +240,20 @@
       if(quality.auto&&!M.validateSetup(setup).length){
         previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
         savedScan([{path:["setup"],value:setup}],ticket,"loading");hideScanProgress();toast("Lineup updated.");
+      }else if(handsFree){
+        scanFeedback("Lineup unclear. Fill the frame with the loading screen and take another photo.");
       }else{
         reviewSetup(setup,[...(res.issues||[]),...quality.issues],ticket);
         hideScanProgress();
       }
-    }catch(e){scanProgress("#scan-progress","Scan needs attention: "+(e.message||e),1);}
+    }catch(e){if(handsFree)scanFeedback("Couldn't read this photo. Take another photo of the full screen.");else scanProgress("#scan-progress","Scan needs attention: "+(e.message||e),1);}
   }
   let sbLib=null;
   const loadScoreboard=()=>sbLib||=(window.ScoreboardScan?Promise.resolve():new Promise((resolve,reject)=>{
     const script=document.createElement("script");script.src="scoreboard.js";script.onload=resolve;script.onerror=()=>reject(new Error("Couldn't load the scoreboard reader"));document.head.append(script);
   }));
   function cleanBoard(board){
-    const out={at:board.at,capturedAt:board.capturedAt,clock:board.clock,sessionId:board.sessionId,scanId:crypto.randomUUID(),sourceLayout:board.sourceLayout};
+    const out={at:board.at,capturedAt:board.capturedAt,clock:board.clock,sessionId:board.sessionId,scanId:crypto.randomUUID(),sourceLayout:board.sourceLayout,autoApplied:board.autoApplied===true};
     for(const side of ["ours","theirs"])out[side]=board[side].map((r,i)=>{
       const row={role:ROLES[i],hero:r.hero||null,items:Array.from({length:6},(_,j)=>r.items?.[j]??null),
         inventoryConfirmed:r.inventoryConfirmed===true,inventoryComplete:r.inventoryComplete===true,inventoryAt:board.at};
@@ -281,20 +284,25 @@
     previousScan={before:{setup:M.clone(S.setup),live:M.clone(S.live),board:M.clone(S.board)},after:{setup:M.clone(setup),live:M.clone(live),board:M.clone(board)}};
     return [{path:["setup"],value:setup},{path:["live"],value:live},{path:["board"],value:board}];
   }
-  async function runBoardScan(file,detected){
+  async function runBoardScan(file,detected,{handsFree=false}={}){
     const ticket=scanTicket(file);
     try{
       await loadScoreboard();
-      const res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
+      let res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
       requireScan(ticket);
       if(!res.ours?.length){
+        if(handsFree){scanFeedback("Scoreboard unclear. Move closer, keep the whole scoreboard in the frame, and retake.");return;}
         scanProgress("#board-progress",(res.issues||["No scoreboard rows found."]).join(" "),1);
         const button=document.createElement("button");button.type="button";button.className="chip";button.textContent="Straighten photo and retry";button.onclick=()=>{hideScanProgress();preparePhoto(file,runBoardScan);};$("#board-progress").append(button);return;
       }
-      const quality=window.ScanQuality.assess("scoreboard",res,{heroes:A.heroes,items:A.items,squad:A.squad.players});
+      const options={heroes:A.heroes,items:A.items,squad:A.squad.players};
+      let quality;
+      if(handsFree){const automatic=window.ScanQuality.automaticBoard(res,options);res=automatic.result;quality=automatic.quality;}
+      else quality=window.ScanQuality.assess("scoreboard",res,options);
       const board={at:file._capturedAt,capturedAt:file._capturedAt,clock:detected?.clockRead?.seconds??photoTime.gameTime(file,S.clock.startedAt),sessionId:S.id,sourceLayout:res.sourceLayout,ours:res.ours,theirs:res.theirs};
       lastBoardRead={board:M.clone(board),issues:res.issues||[],sessionId:S.id};
       if(quality.auto){
+        board.autoApplied=true;
         for(const side of ["ours","theirs"])board[side].forEach((row,i)=>{
           row.inventoryConfirmed=quality.inventoryReady[side][i];row.inventoryComplete=row.inventoryConfirmed;
           if(!row.inventoryConfirmed)row.items=Array(6).fill(null);
@@ -302,44 +310,33 @@
         const clean=cleanBoard(board),changes=boardChanges(clean);
         savedScan(changes,ticket,"scoreboard");
         lastBoardRead.ticket={sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
-        hideScanProgress();toast("Numbers updated. "+(Object.values(quality.inventoryReady).flat().every(Boolean)?"Equipment updated.":"Review equipment for item advice."));
-      }else{reviewBoard(board,[...(res.issues||[]),...quality.issues],ticket);hideScanProgress();}
-    }catch(e){scanProgress("#board-progress","Scan needs attention: "+(e.message||e),1);}
+        hideScanProgress();toast("Scoreboard updated. Unclear values stay unknown.");
+      }else if(handsFree){scanFeedback("Scoreboard unclear. Move closer, hold the phone level, and take another photo.");}
+      else{reviewBoard(board,[...(res.issues||[]),...quality.issues],ticket);hideScanProgress();}
+    }catch(e){if(handsFree)scanFeedback("Couldn't update from this photo. Take another photo of the current scoreboard.");else scanProgress("#board-progress","Scan needs attention: "+(e.message||e),1);}
   }
   window.__reviewLastScan=()=>{
     if(!lastBoardRead||lastBoardRead.sessionId!==S.id||Date.now()-lastBoardRead.board.at>180000)return toast("Scan a fresh scoreboard first.");
     const t={sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
     reviewBoard(M.clone(lastBoardRead.board),lastBoardRead.issues,t,true);
   };
-  function chooseScreen(){
-    return new Promise(resolve=>{
-      const d=document.createElement("dialog");d.className="screen-choice";d.setAttribute("aria-label","Choose photo screen");
-      d.innerHTML='<h3>What is in this photo?</h3><p>The screen type was uncertain.</p>'+[["scoreboard","Scoreboard"],["build","Build / item shop"],["loading","Loading screen"],["minimap","HUD / minimap"]].map(([k,v])=>'<button class="chip" data-screen="'+k+'">'+v+'</button>').join("")+'<button class="chip ghost" data-cancel>Cancel</button>';
-      const done=k=>{d.close();d.remove();resolve(k);};document.body.append(d);d.showModal();
-      d.querySelectorAll("[data-screen]").forEach(b=>b.onclick=()=>done(b.dataset.screen));d.querySelector("[data-cancel]").onclick=()=>done(null);d.oncancel=e=>{e.preventDefault();done(null);};
-    });
-  }
   async function runAutoPhoto(file,forcedKind){
     scanTicket(file);
-    let follow=null;
+    $("#scan-review").hidden=true;$("#map-review").hidden=true;
     await exclusiveScan(async()=>{
-      let detected=forcedKind?{kind:forcedKind}:await window.PhotoRouter.detect(file,{heroes:A.heroes,items:A.items,onProgress:(m,f)=>scanProgress("#scan-progress",m,f)});
+      try{
+      const detected=forcedKind?{kind:forcedKind}:await window.PhotoRouter.detect(file,{heroes:A.heroes,items:A.items,onProgress:(m,f)=>scanProgress("#scan-progress",m,f)});
       requireScan(file._scanTicket);
-      const kind=detected.kind==="unknown"?await chooseScreen():detected.kind;
-      if(!kind)return hideScanProgress();
-      requireScan(file._scanTicket);
-      if(kind==="scoreboard")await runBoardScan(file,detected);
-      else if(kind==="loading")await runScan(file);
+      const kind=detected.kind;
+      // The dedicated reader verifies an uncertain route; the player never has
+      // to choose a screen type or fill in a review form after taking a photo.
+      if(kind==="scoreboard"||kind==="unknown")await runBoardScan(file,detected,{handsFree:true});
+      else if(kind==="loading")await runScan(file,{handsFree:true});
       else if(kind==="build"||kind==="shop"){
-        const parsed=detected.lines?.length?window.BuildScan.parse(detected.lines,A.items):null;follow={kind:"build",file,parsed};hideScanProgress();
-      }else{follow={kind:"minimap",file};hideScanProgress();}
+        scanFeedback("Item shop recognized. Photograph the scoreboard to update live player stats.");
+      }else scanFeedback("HUD recognized. Open the scoreboard and take a photo to update player stats.");
+      }catch(e){scanFeedback(currentScan(file._scanTicket)?"Couldn't read this photo. Take another photo of the scoreboard.":"Match changed. Take a new photo for this match.");}
     });
-    if(follow?.kind==="minimap")await openMap(file);
-    else if(follow?.kind==="build"){
-      requireScan(file._scanTicket);
-      let who=me;if(!who){who=await chooseIdentity(A.squad.players.map(p=>p.key));if(!who)return;me=who;store.set("squad-me",who);$("#me").value=who;render();}
-      planningUI.open(who,{file,parsed:follow.parsed});
-    }
   }
 
   function renderBoard() {

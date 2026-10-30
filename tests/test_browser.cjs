@@ -105,7 +105,7 @@ try{
  await page.waitForFunction(()=>JSON.parse(localStorage.getItem("squad-match")).objectives.fangtooth?.respawnAt>=120);
  await closeDetails();await page.reload();await page.waitForFunction(()=>window.__matchFocus);await details('objectives');await page.waitForFunction(()=>document.querySelector('#objectives')?.innerText.includes('Respawns in'));
  assert.match(await page.locator('#objectives').innerText(),/Respawns in/);await closeDetails();
- // Scanner integration: uncertain results need a review and must not mutate state first.
+ // Uncertain automatic results leave state unchanged; manual review remains opt-in.
  await page.evaluate(()=>{
    window.PhotoRouter.detect=async()=>({kind:'scoreboard'});
    window.ScanQuality.assess=()=>({auto:false,score:60,issues:['Review uncertain numbers']});
@@ -116,6 +116,9 @@ try{
    window.ScoreboardScan={scan:async()=>({ours,theirs,issues:['Check numbers']})};
  });
  await page.locator('#board-file').setInputFiles({name:"board.png",mimeType:"image/png",buffer:Buffer.from(await page.evaluate(()=>{const c=document.createElement("canvas");c.width=c.height=4;return c.toDataURL("image/png").split(",")[1];}),"base64")});
+ await page.waitForFunction(()=>document.querySelector('#mf-age')?.textContent.includes('Scoreboard unclear'));
+ assert.equal(await page.locator('#scan-review').isHidden(),true);
+ await page.evaluate(()=>window.__reviewLastScan());
  await page.waitForSelector('#scan-review:not([hidden])');
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
  await review('ours',0);await page.locator('#scan-review input[data-side="ours"][data-row="0"][data-field="d"]').fill("4");
@@ -135,13 +138,13 @@ try{
  await review('theirs',2);await page.locator('#scan-review select[data-side="theirs"][data-row="2"]').selectOption('gideon');
  await page.locator('#scan-review input[data-side="theirs"][data-row="2"][data-field="lvl"]').fill('14');
  await page.locator('#scan-review input[data-side="theirs"][data-row="2"][data-field="gold"]').fill('19000');
- await page.locator('[data-inventory="theirs-2"] summary').click();
+ await page.locator('[data-inventory="theirs-2"]').evaluate(el=>el.open=true);
  const enemySlot=page.locator('[data-item-side="theirs"][data-item-row="2"][data-item-slot="0"]');
  await enemySlot.fill('not-a-real-item');await page.locator('#scan-apply').click();
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
  await enemySlot.fill(observed.enemy.label);
  await page.locator('[data-confirm-side="theirs"][data-confirm-row="2"]').check();
- await review('ours',observed.playerIndex);await page.locator(`[data-inventory="ours-${observed.playerIndex}"] summary`).click();
+ await review('ours',observed.playerIndex);await page.locator(`[data-inventory="ours-${observed.playerIndex}"]`).evaluate(el=>el.open=true);
  await page.locator(`[data-item-side="ours"][data-item-row="${observed.playerIndex}"][data-item-slot="0"]`).fill(observed.own.label);
  await page.locator(`[data-confirm-side="ours"][data-confirm-row="${observed.playerIndex}"]`).check();
  await page.locator(`[data-complete-side="ours"][data-complete-row="${observed.playerIndex}"]`).check();
