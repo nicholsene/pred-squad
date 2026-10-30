@@ -71,7 +71,7 @@ class PredGG:
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
     # ---------- queries ----------
-    def query(self, q: str, variables: dict | None = None, retries: int = 4) -> dict:
+    def query(self, q: str, variables: dict | None = None, retries: int = 4, *, authenticate: bool = True) -> dict:
         for attempt in range(retries + 1):
             wait = self.min_interval - (time.time() - self._last)
             if wait > 0:
@@ -81,7 +81,7 @@ class PredGG:
                 r = self.s.post(
                     GQL_URL,
                     json={"query": q, "variables": variables or {}},
-                    headers={"Content-Type": "application/json", **self._auth_header()},
+                    headers={"Content-Type": "application/json", **(self._auth_header() if authenticate else {})},
                     timeout=60,
                 )
             except requests.RequestException as e:
@@ -103,3 +103,8 @@ class PredGG:
                 raise PredGGError(msgs)
             return body["data"]
         raise PredGGError("unreachable")
+
+
+    def public_query(self, q: str, variables: dict | None = None, retries: int = 4) -> dict:
+        """Verified public catalogue queries do not depend on OAuth health."""
+        return self.query(q, variables, retries, authenticate=False)

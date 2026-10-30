@@ -116,6 +116,23 @@ try{
  assert.equal(confirmed.theirs[2].inventoryComplete,false);assert(!JSON.stringify(confirmed).includes('data:image'));
  assert.equal(confirmed.ours[observed.playerIndex].currentGold,null);
  assert.match(await page.locator('#counterbuild').innerText(),/Gideon/);
+ await page.waitForFunction(()=>window.__optimizerResult?.()?.assignment.some(a=>a.item));
+ const optimized=await page.evaluate(()=>window.__optimizerResult());
+ assert.equal(optimized.status,'ready');assert(optimized.search.evaluatedCombinations>1);
+ assert(optimized.scenarios.some(s=>s.id==='magical-pressure'));
+ await page.locator('[data-opt-scope="solo"]').click();
+ assert.equal(await page.evaluate(()=>window.__optimizerResult().assignment.length),1);
+ await page.locator('[data-opt-scope="squad"]').click();
+ await page.locator('#optimizer-mode').selectOption('STANDARD');
+ await page.locator('#optimizer [data-opt-section="profile"] > summary').click();
+ assert.match(await page.locator('#optimizer [data-opt-section="profile"]').innerText(),/Standard/);
+ await page.locator('#optimizer-mode').selectOption('RANKED');
+ const selected=await page.evaluate(()=>window.__optimizerResult().assignment.find(a=>a.item));
+ await page.locator('#optimizer [data-opt-player="'+selected.who+'"] [data-opt-choose]').first().click();
+ await page.waitForFunction(()=>Object.keys(JSON.parse(localStorage.getItem('squad-match')).pivotIntents).length>0);
+ assert.equal(await page.evaluate(()=>Object.values(JSON.parse(localStorage.getItem('squad-match')).pivotIntents)[0].countsAsOwned),false);
+ await page.locator('#optimizer').screenshot({path:path.resolve(__dirname,'../.test-artifacts/optimizer-mobile.png')});
+
  assert(await page.locator("#counterbuild .counter-purchases li").count()>0,"reviewed lobby build must produce a visible response");
  assert.doesNotMatch(await page.locator('#counterbuild').innerText(),/Affordable with confirmed current gold/);
  await page.locator('#counterbuild details[data-section="threats"]').evaluate(el=>el.open=true);
@@ -165,7 +182,7 @@ try{
  await page.locator('#match-finish').click();await page.waitForSelector('#postmatch:not([hidden])');
  fs.mkdirSync(path.resolve(__dirname,"../.test-artifacts"),{recursive:true});
  await page.screenshot({path:path.resolve(__dirname,"../.test-artifacts/match-mobile.png"),fullPage:true});
- assert.deepEqual(errors,[]);console.log("ok: slow-module handoff, identity, editable setup, start, timers, reload, scan review, correction, undo, camera guides, reviewed starting plans, three item alternatives, planned pivots, narrow-phone layout, image fallbacks, wake-lock acquisition/release/retry and finish");
+ assert.deepEqual(errors,[]);console.log("ok: slow-module handoff, identity, editable setup, start, timers, reload, scan review, correction, undo, camera guides, reviewed starting plans, solo/squad scenario optimizer, three item alternatives, planned pivots, narrow-phone layout, image fallbacks, wake-lock acquisition/release/retry and finish");
  await context.close();
 }finally{await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

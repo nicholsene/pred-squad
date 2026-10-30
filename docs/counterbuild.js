@@ -47,7 +47,7 @@
  {key:"crit",label:"critical-strike items",test:p=>p.crit>=20,buy:it=>type(it,"ANTI_CRIT"),owned:p=>p.antiCrit>0,answer:"anti-crit defense",personal:true},
  {key:"burst",label:"burst-oriented items",test:p=>p.burst>0,buy:it=>type(it,"ANTI_BURST","SPELL_SHIELD"),owned:p=>p.antiBurst>0,answer:"anti-burst / spell shield",personal:true}];
  function fit(it,d,classes){const phys=stat(it,"PHYSICAL_POWER"),mag=stat(it,"MAGICAL_POWER");if(d==="physical"&&mag>0||d==="magical"&&phys>0)return null;if(d==="unknown"&&(phys>0||mag>0))return null;return (d==="physical"&&phys>0||d==="magical"&&mag>0?.6:0)+(classes.includes(it.class)?.35:0);}
- function plan({items=[],heroes=[],matches=[],setup={},board=null,now=Date.now(),snapshotMaxAgeMs=180000,patchReview=null,buildPlans={},pivotIntents={},patch=null,sessionId=null}={}){
+ function plan({items=[],heroes=[],matches=[],setup={},board=null,now=Date.now(),snapshotMaxAgeMs=180000,patchReview=null,buildPlans={},pivotIntents={},patch=null,sessionId=null,coordinated=false}={}){
   const C=Object.fromEntries(items.map(i=>[i.name,i])),H=Object.fromEntries(heroes.map(h=>[h.slug,h])),name=h=>H[h]?.name||h||"Unknown hero";
   const result={status:"needs-observation",threats:[],players:[],warnings:[]},fresh=!!board&&current(board.at,now,snapshotMaxAgeMs);
   if(!fresh){result.status=board?"stale":"needs-observation";result.warnings.push(board?"Snapshot is stale or has an invalid time. Confirm a new scoreboard and inventories.":"Confirm a scoreboard photo and inventories for current counterbuild advice.");}
@@ -70,8 +70,8 @@
    result.threats.push({role:e.role,hero:e.hero,label:name(e.hero),priority,source:e.confirmed?"confirmed":"unknown",items:e.names,signals,levelGap,goldGap,reasons,inventoryAt:e.confirmed?e.inventoryAt:null,observationAgeMs:e.confirmed?now-e.inventoryAt:null});
   }
   result.threats.sort((a,b)=>b.priority-a.priority||a.role.localeCompare(b.role));
-  const covered=new Map(),damageBy=new Map();for(const o of us)damageBy.set(o.role,damage(o,H,matches,C));
-  const blocked=(it,o)=>(it.blockedBy||[]).some(n=>o.names.includes(n))||(it.blocks||[]).some(n=>o.names.includes(n))||o.names.some(n=>(C[n]?.blocks||[]).includes(it.name));
+  const covered=new Map(),damageBy=new Map();for(const o of us)damageBy.set(o.role,damage(o,H,coordinated?[]:matches,C));
+  const blocked=(it,o)=>(it.blockedBy||[]).some(n=>o.names.includes(n))||(it.blocks||[]).some(n=>o.names.includes(n))||o.names.some(n=>[...(C[n]?.blocks||[]),...(C[n]?.blockedBy||[])].includes(it.name));
   const capacity=o=>o.complete&&o.names.filter(n=>C[n]?.slot==="PASSIVE").length<6?2:!o.complete?1:0;
   const options=(o,rule)=>{const d=damageBy.get(o.role).type;return items.filter(finalItem).filter(it=>!o.names.includes(it.name)&&!(o.row.excludedItems||[]).includes(it.name)).filter(it=>!blocked(it,o)&&rule.buy(it,d)).map(it=>{const base=baselineBy.get(o.role),continuity=base?.status==="ready"?(base.plan.nextItem===it.name ? .02 : base.plan.items.includes(it.name) ? .01 : 0):0;return{it,fit:fit(it,d,H[o.hero]?.classes||[]),continuity};}).filter(x=>x.fit!=null).sort((a,b)=>b.fit-a.fit||b.continuity-a.continuity||a.it.cost-b.it.cost||a.it.name.localeCompare(b.it.name));};
   const utilityOwner=new Map();
@@ -97,7 +97,7 @@
    const candidates=[];
    for(const rule of RULES){
     const sources=result.threats.filter(t=>t.source==="confirmed"&&t.signals.some(s=>s.key===rule.key));
-    if(!sources.length||rule.damage&&rule.damage!==d.type)continue;if(rule.team&&(covered.has(rule.key)||utilityOwner.get(rule.key)!==o.who))continue;
+    if(!sources.length||rule.damage&&rule.damage!==d.type)continue;if(rule.team&&(covered.has(rule.key)||!coordinated&&utilityOwner.get(rule.key)!==o.who))continue;
     if(rule.owned(o.profile)||o.names.some(n=>finalItem(C[n])&&rule.buy(C[n],d.type))){out.ownedAnswers.push(`${rule.answer} is already present in your confirmed items`);continue;}
     const candidate=options(o,rule)[0];if(!candidate)continue;const it=candidate.it,currentGold=finite(row.currentGold)&&row.currentGold>=0?row.currentGold:null;
     const components=o.names.some(n=>!finalItem(C[n])&&C[n]?.slot==="PASSIVE"),affordable=!o.complete||currentGold==null?null:currentGold>=it.cost?true:components?null:false;
@@ -109,9 +109,9 @@
    }
    candidates.sort((a,b)=>b.priority-a.priority||a.fullCost-b.fullCost||a.item.name.localeCompare(b.item.name));const selected=new Set();for(const c of candidates){if(selected.has(c.item.name))continue;out.recommendations.push(c);selected.add(c.item.name);if(out.recommendations.length===3)break;}
    const reviewedBaseline=baselineBy.get(o.role),baseline=reviewedBaseline?.status==='ready'?reviewedBaseline.plan:null;
-   const bestNeeds=[];for(const candidate of candidates)if(!bestNeeds.some(n=>n.answerKey===candidate.answerKey)){bestNeeds.push(candidate);if(bestNeeds.length===3)break;}
+   const bestNeeds=[];for(const candidate of candidates)if(!bestNeeds.some(n=>n.answerKey===candidate.answerKey)){bestNeeds.push(candidate);if(bestNeeds.length===(coordinated?9:3))break;}
    out.needs=bestNeeds.map(best=>{
-    const rule=RULES.find(r=>r.key===best.answerKey),choices=options(o,rule).slice(0,3),minPrice=Math.min(...choices.map(x=>x.it.cost)),threats=result.threats.filter(t=>best.targets.includes(t.hero));
+    const rule=RULES.find(r=>r.key===best.answerKey),choices=options(o,rule).slice(0,coordinated?6:3),minPrice=Math.min(...choices.map(x=>x.it.cost)),threats=result.threats.filter(t=>best.targets.includes(t.hero));
     const alternatives=choices.map((choice,index)=>{
      const it=choice.it,hasComponents=o.names.some(n=>!finalItem(C[n])&&C[n]?.slot==='PASSIVE'),affordable=!o.complete||best.currentGold==null?null:best.currentGold>=it.cost?true:hasComponents?null:false;
      const comparison=BuildPlans.compare({baseline,pivot:it.name,owned:o.names,catalog:items});

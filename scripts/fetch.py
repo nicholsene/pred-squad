@@ -29,7 +29,8 @@ CONFIG = json.loads((ROOT / "config" / "squad.json").read_text())
 
 HEROES_Q = """
 { heroes { id slug data { displayName roles classes recommendedSkills
-    abilities { key displayName simplifiedDescription cooldown cost } } } }
+    attributes { stat values }
+    abilities { key displayName simplifiedDescription gameDescription menuDescription type name id icon cooldown cost } } } }
 """
 
 VERSIONS_Q = "{ versions { id name releaseDate } }"
@@ -40,6 +41,7 @@ RATINGS_Q = "{ ratings { name group startTime endTime ranks { name ratingMin rat
 # Item catalogue: price, stats and type for every item (public data).
 ITEMS_Q = """
 { items { data { name displayName totalPrice price slotType rarity aggressionType class isHidden
+    effects { id name text active condition cooldown }
     stats { stat value } icon smallIcon buildsFrom { name } blocks { name } blockedBy { name } } } }
 """
 
@@ -135,7 +137,7 @@ def pct(x):
 # ---------------- heroes ----------------
 def fetch_ranks(api: PredGG) -> dict:
     """The current split's rank ladder (name -> points range)."""
-    rs = [r for r in api.query(RATINGS_Q)["ratings"] if r.get("ranks")]
+    rs = [r for r in api.public_query(RATINGS_Q)["ratings"] if r.get("ranks")]
     cur = max(rs, key=lambda r: r.get("startTime") or "")
     ranks = sorted(({"name": k["name"], "min": k["ratingMin"], "max": min(k["ratingMax"], 99999)} for k in cur["ranks"]), key=lambda k: k["min"])
     return {"season": cur["name"], "ranks": ranks}
@@ -143,14 +145,18 @@ def fetch_ranks(api: PredGG) -> dict:
 
 def fetch_items(api: PredGG) -> list[dict]:
     out = []
-    for it in api.query(ITEMS_Q)["items"]:
+    for it in api.public_query(ITEMS_Q)["items"]:
         d = it.get("data") or {}
         if not d.get("name"):
             continue   # hidden items are kept: upgraded crests and jungle items show up in inventories
+        effects = d.get("effects")
+        if not isinstance(effects, list):
+            raise PredGGError("Missing effects for "+d["name"])
         out.append({"name": d["name"], "label": d.get("displayName") or d["name"],
                     "cost": d.get("totalPrice") or d.get("price") or 0, "slot": d.get("slotType"),
                     "rarity": d.get("rarity"), "type": d.get("aggressionType"), "class": d.get("class"),
                     "hidden": bool(d.get("isHidden")),
+                    "effects": [{k:e.get(k) for k in ("id","name","text","active","condition","cooldown")} for e in effects],
                     "icon": d.get("icon"), "smallIcon": d.get("smallIcon"),
                     "buildsFrom": [x["name"] for x in d.get("buildsFrom", []) if x.get("name")],
                     "blocks": [x["name"] for x in d.get("blocks", []) if x.get("name")],
@@ -160,7 +166,7 @@ def fetch_items(api: PredGG) -> list[dict]:
 
 
 def fetch_heroes(api: PredGG) -> list[dict]:
-    data = api.query(HEROES_Q)
+    data = api.public_query(HEROES_Q)
     heroes = []
     for h in data["heroes"]:
         d = h.get("data") or {}
@@ -173,9 +179,12 @@ def fetch_heroes(api: PredGG) -> list[dict]:
             "roles": d.get("roles") or [],
             "classes": d.get("classes") or [],
             "skills": d.get("recommendedSkills") or [],
+            "attributes": [{"stat":a.get("stat"),"values":a.get("values")} for a in (d.get("attributes") or [])],
             "abilities": [
                 {"key": a["key"], "name": a["displayName"], "desc": a.get("simplifiedDescription") or "",
-                 "cooldown": a.get("cooldown")}
+                 "cooldown": a.get("cooldown"), "cost": a.get("cost"),
+                 "id": a.get("id"), "internalName":a.get("name"), "type":a.get("type"), "icon":a.get("icon"),
+                 "gameDescription":a.get("gameDescription"), "menuDescription":a.get("menuDescription")}
                 for a in (d.get("abilities") or [])
             ],
         })
@@ -185,7 +194,7 @@ def fetch_heroes(api: PredGG) -> list[dict]:
 
 def current_patch(api: PredGG) -> tuple[str, list[str]]:
     """Latest version name and the ids of every version in the same major.minor line."""
-    vs = api.query(VERSIONS_Q)["versions"]
+    vs = api.public_query(VERSIONS_Q)["versions"]
     vs = [v for v in vs if v.get("releaseDate")]
     vs.sort(key=lambda v: v["releaseDate"])
     latest = vs[-1]["name"]
@@ -199,7 +208,18 @@ def normalise_match(m: dict, squad_ids: dict[str, str]) -> dict:
     players = []
     for mp in m["matchPlayers"]:
         pid = (mp.get("player") or {}).get("id")
+        import math
+        metric_sources = {"k":"kills","d":"deaths","a":"assists","lvl":"level","gold":"gold","spent":"goldSpent",
+            "wards":"wardsPlaced","wardsKilled":"wardsDestroyed","heroDmg":"heroDamage","taken":"heroDamageTaken",
+            "mitigated":"totalDamageMitigated","cs":"minionsKilled","laneCs":"laneMinionsKilled",
+            "enemyJungle":"neutralMinionsEnemyJungle","teamJungle":"neutralMinionsTeamJungle",
+            "obj":"totalDamageDealtToObjectives","towers":"totalDamageDealtToStructures"}
+        measured = {k:isinstance(mp.get(v),(int,float)) and not isinstance(mp.get(v),bool)
+                    and math.isfinite(mp[v]) and mp[v]>=0 for k,v in metric_sources.items()}
+        raw_items=mp.get("inventoryItemData")
+        measured["items"]=isinstance(raw_items,list) and all(x is None or isinstance(x,dict) and isinstance(x.get("name"),str) and bool(x["name"]) for x in raw_items)
         players.append({
+            "measured": measured,
             "squad": squad_ids.get(pid),          # squad key or None
             "hero": (mp.get("hero") or {}).get("slug"),
             "role": mp.get("role"),
@@ -212,6 +232,7 @@ def normalise_match(m: dict, squad_ids: dict[str, str]) -> dict:
             "mitigated": mp.get("totalDamageMitigated", 0),
             "cs": mp.get("minionsKilled", 0), "laneCs": mp.get("laneMinionsKilled", 0),
             "enemyJungle": mp.get("neutralMinionsEnemyJungle", 0),
+            "teamJungle": mp.get("neutralMinionsTeamJungle"),
             "obj": mp.get("totalDamageDealtToObjectives", 0),
             "towers": mp.get("totalDamageDealtToStructures", 0),
             "items": [i["name"] for i in (mp.get("inventoryItemData") or []) if i and i.get("name")],
@@ -222,6 +243,7 @@ def normalise_match(m: dict, squad_ids: dict[str, str]) -> dict:
         })
     return {
         "id": m["id"],
+        "normalisationVersion": 2,
         "start": m.get("startTime"),
         "duration": m.get("duration"),
         "mode": m.get("gameMode"),
@@ -256,8 +278,9 @@ def fetch_matches(api: PredGG, existing: dict) -> dict:
                 break
         print(f"  {p['key']}: {new} new matches")
     # backfill matches stored before items/gold curves were collected
-    old = [mid for mid, m in by_id.items() if m["players"] and not all(k in m["players"][0] for k in ("items", "rp"))]
-    for mid in old[:CONFIG.get("backfillPerRun", 150)]:
+    old = [mid for mid, m in by_id.items() if m["players"] and (m.get("normalisationVersion")!=2 or not all(k in m["players"][0] for k in ("items", "rp", "measured")))]
+    backfill_limit=min(CONFIG.get("backfillPerRun",150),50)
+    for mid in old[:backfill_limit]:
         try:
             m = api.query(MATCH_Q, {"id": mid}).get("match")
             if m:
@@ -265,7 +288,7 @@ def fetch_matches(api: PredGG, existing: dict) -> dict:
         except PredGGError as e:
             print(f"  backfill {mid}: {e}")
     if old:
-        print(f"  backfilled {min(len(old), CONFIG.get('backfillPerRun', 150))} of {len(old)} older matches")
+        print(f"  backfilled {min(len(old), backfill_limit)} of {len(old)} older matches")
     matches = sorted(by_id.values(), key=lambda m: m["start"] or "", reverse=True)
     return {"updatedAt": now_iso(), "matches": matches}
 
@@ -357,14 +380,14 @@ def main() -> int:
     refresh("ranks.json", lambda: {"updatedAt": now_iso(), **fetch_ranks(api)})
     item_file = refresh("items.json", lambda: {"updatedAt": now_iso(), "patch": current_patch(api)[0], "items": fetch_items(api)})
     from build_item_templates import build as build_templates
-    from patch_review import build_review
+    from patch_review import build_review, logic_fingerprint
     import hashlib
     refresh("item-templates.json", lambda: build_templates(item_file, load("item-templates.json", None)))
     policy_path = ROOT / "config" / "patch-policy.json"
     baseline_path = ROOT / "config" / "patch-baseline.json"
     policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
     baseline = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
-    logic = hashlib.sha256((ROOT / "docs/counterbuild.js").read_bytes()).hexdigest()
+    logic = logic_fingerprint(ROOT)
     save("patch-review.json", build_review(baseline, hero_file, item_file, {**policy,
          "sourceComplete": {"heroes.json", "items.json"}.issubset(succeeded),
          "sourceErrors": [s for s in status["errors"] if s.startswith(("heroes.json:", "items.json:"))],

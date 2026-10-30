@@ -57,7 +57,7 @@
       <h2 id="sug-h"><span class="step">3</span>Your game plan.</h2>
     </div>
     <p class="note">Recommendation scores blend your results with patch meta. They are not calibrated win probabilities. Small samples mean more uncertainty.</p>
-    <div id="starting-builds" class="tile"></div>
+    <div id="profile-insights"></div><div id="starting-builds" class="tile"></div>
     <details class="plan-lineup"><summary>Edit your lineup</summary><div id="plan-setup"></div></details>
     <div class="sub-h">Picks and roles</div>
     <div id="draft-controls" class="tile"></div>
@@ -71,7 +71,7 @@
     </div>
     <div class="match-status"><div id="lifecycle" class="tile"></div><div id="clock" class="tile clock"></div></div>
     <details class="room-tools"><summary>Shared squad room</summary><div id="room" class="tile room"></div></details>
-    <div id="counterbuild" class="tile counterbuild"></div>
+    <div id="optimizer" class="tile optimizer"></div><div id="counterbuild" class="tile counterbuild"></div>
     <div id="team-intents"></div>
     <div id="scan-review" class="tile" hidden></div>
 
@@ -122,6 +122,9 @@
 <script src="itemlab.js"></script>
 <script src="buildplans.js"></script>
 <script src="counterbuild.js"></script>
+<script src="mechanics.js"></script>
+<script src="profiles.js"></script>
+<script src="optimizer.js"></script>
 <script src="itemvision.js"></script>
 <script src="photo-prep.js"></script>
 <script src="camera.js"></script>
@@ -131,6 +134,7 @@
 <script src="minimap.js"></script>
 <script src="insights.js"></script>
 <script src="planning.js"></script>
+<script src="optimizer-ui.js"></script>
 <script src="app.js"></script>
 <script>if ("serviceWorker" in navigator) {
   const had = !!navigator.serviceWorker.controller; let done = false;

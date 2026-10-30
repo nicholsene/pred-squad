@@ -26,6 +26,8 @@
   let me = store.get("squad-me", "");
   let tick = null, lastLifecycleStage = null;
   const planningUI=window.SquadPlanning.create({app:A,getState:()=>S,getMe:()=>me,commit,toast,exclusiveScan});
+  const optimizerUI=window.SquadOptimizerUI.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast});
+  window.__optimizerResult=()=>optimizerUI.getResult();
 
   // ---------- persistence: local or shared ----------
   const applyChanges = (state, changes) => {
@@ -544,6 +546,7 @@
     };
   }
   function renderCounterBuild() {
+    optimizerUI.render();
     const el=$('#counterbuild');if(!el)return;
     const board=S.board?.sessionId===S.id?S.board:null;
     const plan=window.CounterBuild.plan({items:A.items,heroes:A.heroes,matches:A.ctx.matches,setup:S.setup,board,patchReview:A.patchReview,buildPlans:S.buildPlans,pivotIntents:S.pivotIntents,patch:A.itemPatch,sessionId:S.id});

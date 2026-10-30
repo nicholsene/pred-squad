@@ -28,6 +28,9 @@ jobs:
       - run: node tests/test_itemvision.js
       - run: node tests/test_buildplans.js
       - run: node tests/test_buildscan.js
+      - run: node tests/test_profiles.js
+      - run: node tests/test_mechanics.js
+      - run: node tests/test_optimizer.js
       - run: |
           for file in docs/*.js; do node --check "$file"; done
       - run: npm install --no-save --package-lock=false playwright@1.62.1
