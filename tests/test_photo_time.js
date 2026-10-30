@@ -1,0 +1,4 @@
+const a=require('node:assert/strict'),T=require('../docs/photo-time.js'),M=require('../docs/minimap.js');
+const f=T.stamp({},20000);a.equal(f._capturedAt,10000);a.equal(T.stamp(f,30000)._capturedAt,10000);a.equal(T.copy(f,{})._capturedAt,10000);a.equal(T.gameTime(f,5000),5);a.equal(T.stamp({_capturedAt:17000,_captureSource:'camera'},20000)._capturedAt,17000);
+const line=t=>[[{t,c:95}]];a.equal(M.automatic(line('1:29')).seconds,89);a.equal(M.automatic(line('1.29')).seconds,89);a.equal(M.automatic(line('2m+')),null);a.equal(M.automatic(line('34')),null);a.equal(M.candidates(line('34'))[0].seconds,34);a.equal(M.automatic(line('1:29 2m+')),null);a.equal(M.candidates(line('1:29 1:29')).length,2);a.equal(M.automatic([[{t:'1:29',c:89}]]),null);a.equal(M.candidates([[{t:'2',c:99},{t:'3',c:99}]]).length,0);
+console.log('ok: ten-second upload age, metadata propagation, exact full-crop timer gate, duplicates and approximate/seconds ambiguity');

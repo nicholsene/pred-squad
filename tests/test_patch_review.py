@@ -23,3 +23,22 @@ h['heroes'][0]['skills'].reverse()
 assert build_review(base,h,i,approved)['changes']['heroes'][0]['fields']==['skills']
 assert build_review(base,h,i,{**p,'officialNotesUrl':'https://evil.example/notes'})['status']=='source-incomplete'
 print('ok: patch deltas, skills, stats, logic, source completeness, baseline and explicit review gates')
+
+# Sourced passive/ability/attribute changes participate in patch review.
+clean_base=snapshot(h,i,"logic-v1")
+for field,value in [("effects",[{"id":"e","name":"Passive","text":"new","condition":"On hit"}])]:
+    changed=deepcopy(i);changed["items"][0][field]=value
+    assert build_review(clean_base,h,changed,p)["status"]=="review-required"
+changed=deepcopy(h);changed["heroes"][0]["attributes"]=[{"stat":"HEALTH","values":[500,600]}]
+assert build_review(clean_base,changed,i,p)["status"]=="review-required"
+changed=deepcopy(h);changed["heroes"][0]["abilities"][0]["cost"]=[10,20]
+assert build_review(clean_base,changed,i,p)["status"]=="review-required"
+from patch_review import logic_fingerprint
+import tempfile
+with tempfile.TemporaryDirectory() as folder:
+    root=Path(folder);(root/"docs").mkdir();(root/"docs/counterbuild.js").write_text("v1")
+    first=logic_fingerprint(root);(root/"docs/optimizer.js").write_text("v1")
+    assert logic_fingerprint(root)!=first
+    first=logic_fingerprint(root);(root/"docs/profiles.js").write_text("v1")
+    assert logic_fingerprint(root)!=first
+print("ok: passive source, hero attributes and optimizer/profile code changes invalidate review")

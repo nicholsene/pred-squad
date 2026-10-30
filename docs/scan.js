@@ -89,15 +89,22 @@
     return prev[n];
   }
   const sim = (a, b) => 1 - lev(a, b) / Math.max(a.length, b.length);
+  const confidence = ws => ws.length ? Math.min(...ws.map(w => Number.isFinite(w.c) ? Math.max(0,Math.min(100,w.c))/100 : 0)) : 0;
+  const evidence = (value,source,metrics,resolved=true,extra={}) => ({value,source,metrics,resolved,...extra});
+  const strength = h => h ? Math.min(h.s||0,h.c||0) : 0;
+  const hitEvidence = (h,value=h?.slug,source="ocr") => evidence(value,source,{ocr:h?.c||0,match:h?.s||0},!!h&&!h.ambiguous);
   function bestMatch(token, dict, minLen) {
-    let best = null;
+    let best = null, second = -1;
     for (const d of dict) {
       if (token.length < Math.min(minLen, d.key.length)) continue;
       const need = d.key.length <= 4 ? 1 : d.key.length <= 6 ? 0.8 : 0.75;
       const s = sim(token, d.key);
-      if (s >= need && (!best || s > best.s)) best = { ...d, s };
+      if(s>=need) {
+        if(!best||s>best.s) { if(best)second=Math.max(second,best.s);best={...d,s}; }
+        else second=Math.max(second,s);
+      }
     }
-    return best;
+    return best ? {...best,ambiguous:best.s-second<.05} : null;
   }
 
   /** Find hero names in OCR lines: try windows of 1-3 consecutive words. */
@@ -105,12 +112,13 @@
     const hits = [];
     for (const ws of lines) {
       for (let i = 0; i < ws.length; i++) for (let n = 1; n <= 3 && i + n <= ws.length; n++) {
-        const seg = ws.slice(i, i + n), tok = letters(seg.map(w => w.t).join(""));
+        const seg = ws.slice(i, i + n).filter(w=>letters(w.t)), tok = letters(seg.map(w => w.t).join(""));
         if (tok.length < 3) continue;
         const m = bestMatch(tok, heroDict, 3);
         if (!m) continue;
-        hits.push({ slug: m.slug, s: m.s, len: tok.length,
-          x: (seg[0].x0 + seg[n - 1].x1) / 2 / scale, y: (Math.min(...seg.map(w => w.y0)) + Math.max(...seg.map(w => w.y1))) / 2 / scale,
+        hits.push({ slug: m.slug, s: m.s, c:confidence(seg), ambiguous:m.ambiguous, len: tok.length,
+          x0:seg[0].x0/scale,x1:seg[seg.length-1].x1/scale,
+          x: (seg[0].x0 + seg[seg.length - 1].x1) / 2 / scale, y: (Math.min(...seg.map(w => w.y0)) + Math.max(...seg.map(w => w.y1))) / 2 / scale,
           h: (Math.max(...seg.map(w => w.y1)) - Math.min(...seg.map(w => w.y0))) / scale });
       }
     }
@@ -122,7 +130,7 @@
     for (const ws of lines) for (const w of ws) {
       const tok = letters(w.t); if (tok.length < 3) continue;
       const m = bestMatch(tok, dict, 3);
-      if (m) hits.push({ ...m, x: offX + (w.x0 + w.x1) / 2 / scale, y: offY + (w.y0 + w.y1) / 2 / scale });
+      if (m) hits.push({ ...m, c:confidence([w]), x: offX + (w.x0 + w.x1) / 2 / scale, y: offY + (w.y0 + w.y1) / 2 / scale });
     }
     return hits;
   }
@@ -131,30 +139,51 @@
   // This avoids skin names, surrounding room lighting and unrelated UI text.
   async function alignedLoading(src,heroes,squad,onProgress) {
     const W=src.width,H=src.height,dict=heroes.map(h=>({slug:h.slug,key:letters(h.name)})),tags=squad.map(p=>({slug:p.key,key:letters(p.label)}));
-    const teams={top:{},bottom:{}},votes={top:0,bottom:0};let found=0;
+    const teams={top:{},bottom:{}},votes={top:0,bottom:0},tagReads=[];let found=0;
     for(const [row,y] of [["top",.275],["bottom",.775]])for(let i=0;i<5;i++){
       onProgress("Reading individual hero cards…",.1+.8*found/10);
       const crop={x:W*(.315+.135*i),y:H*y,w:W*.13,h:H*.065,scale:4};
       let best=null;
       for(const mode of ["gray","green","max"]){
         const ls=await words(prep(src,{...crop,mode,thr:140}),{tessedit_pageseg_mode:"6"});
-        const hits=findHeroes(ls,dict,4).sort((a,b)=>b.s-a.s||b.y-a.y);
-        if(hits.length&&(!best||hits[0].s>best.s))best=hits[0];
-        if(best?.s===1)break;
+        const hits=findHeroes(ls,dict,4).sort((a,b)=>strength(b)-strength(a)||b.y-a.y);
+        if(hits.length&&(!best||strength(hits[0])>strength(best)))best=hits[0];
+        if(strength(best)>=.9&&!best.ambiguous)break;
       }
-      const slot={};if(best&&best.s>=.8){slot.hero=best.slug;found++;}
+      const slot={readConfidence:{hero:hitEvidence(best)}};
+      if(best&&best.s>=.8){slot.hero=best.slug;found++;}
       teams[row][ROLES[i]]=slot;
-      const tagLines=await words(prep(src,{x:crop.x,y:H*(row==="top"?.34:.845),w:crop.w,h:H*.045,scale:4,mode:"gray"}),{tessedit_pageseg_mode:"6"});
-      const tagHits=findTokens(tagLines,tags,4);
-      if(tagHits.length){slot.who=tagHits[0].slug;votes[row]++;}
+      const ls=await words(prep(src,{x:crop.x,y:H*(row==="top"?.34:.845),w:crop.w,h:H*.045,scale:4,mode:"gray"}),{tessedit_pageseg_mode:"6"});
+      const hits=findTokens(ls,tags,4).sort((a,b)=>strength(b)-strength(a));
+      if(hits.length){
+        const hit=hits[0];slot.who=hit.slug;slot.readConfidence.who=hitEvidence(hit,hit.slug,"gamertag");
+        votes[row]++;tagReads.push({...hit,row});
+      }
     }
-    const oursRow=votes.top>votes.bottom?"top":"bottom",ours=teams[oursRow],theirs=teams[oursRow==="top"?"bottom":"top"],issues=[];
+    const strong=tagReads.filter(t=>t.s===1&&t.c>=.9&&!t.ambiguous),tagRows=new Set(strong.map(t=>t.row));
+    const oursRow=tagRows.size===1?strong[0].row:(votes.top>votes.bottom?"top":"bottom");
+    const ours=teams[oursRow],theirs=teams[oursRow==="top"?"bottom":"top"],issues=[];
     for(const team of [ours,theirs]){
-      const seen=new Set();for(const role of ROLES){const h=team[role]?.hero;if(h&&seen.has(h)){team[role].hero="";found--;}else if(h)seen.add(h);}
+      const seen=new Set();
+      for(const role of ROLES){const slot=team[role],h=slot?.hero;
+        if(h&&seen.has(h)){slot.hero="";found--;}else if(h)seen.add(h);
+        if(team===theirs){delete slot.who;delete slot.readConfidence.who;}
+      }
     }
-    if(!votes.top&&!votes.bottom)issues.push("Couldn't read your gamertag. Confirm which team is yours.");
+    // Rectification establishes display corners; lane labels establish the role order.
+    const ls=await words(prep(src,{x:0,y:H*.36,w:W,h:H*.26,scale:2,mode:"min"}),{tessedit_pageseg_mode:"11"});
+    const labels=findTokens(ls,ROLES.map(r=>({slug:r,key:r})),2).sort((a,b)=>strength(b)-strength(a));
+    const selected=ROLES.map((role,i)=>labels.find(l=>l.slug===role&&Math.abs(l.x-W*(.38+.135*i))<W*.07));
+    const layout=evidence("role-order","lane-labels",{
+      ocr:Math.min(...selected.map(l=>l?.c||0)),match:Math.min(...selected.map(l=>l?.s||0))
+    },selected.every(l=>l&&!l.ambiguous));
+    const ownTeam=evidence(oursRow,"gamertag",{
+      ocr:strong.length?Math.min(...strong.map(t=>t.c)):0,match:strong.length?1:0
+    },tagRows.size===1);
+    if(!ownTeam.resolved)issues.push("Couldn't identify your team unambiguously. Confirm which team is yours.");
+    if(!layout.resolved)issues.push("Confirm the lane order.");
     if(found<10)issues.push(`${10-found} hero slots need confirmation.`);
-    return {ours,theirs,issues,found,oursRow,method:"straightened card crops"};
+    return {ours,theirs,issues,found,oursRow,readConfidence:{layout,ownTeam},method:"straightened card crops"};
   }
 
   // ---------- main ----------
@@ -172,11 +201,11 @@
     const passB = await words(prep(src, { scale, mode: "max", thr: 175 }));
     let hits = [...findHeroes(passA, heroDict, scale), ...findHeroes(passB, heroDict, scale)];
     let passC = [];
-    if (new Set(hits.map(h => h.slug)).size < 10) {   // third pass only if something is still missing
+    if (new Set(hits.filter(h=>strength(h)>=.9&&!h.ambiguous).map(h=>h.slug)).size < 10) {   // third pass only if something is still missing
       onProgress("Taking a closer look…", 0.6);
       passC = await words(prep(src, { scale, mode: "lum", thr: 175 }), { tessedit_pageseg_mode: "11" }); // sparse text: copes with glare/odd layouts
       hits.push(...findHeroes(passC, heroDict, scale));
-      if (new Set(hits.map(h => h.slug)).size < 10) {
+      if (new Set(hits.filter(h=>strength(h)>=.9&&!h.ambiguous).map(h=>h.slug)).size < 10) {
         onProgress("One more pass…", 0.68);
         const passD = await words(prep(src, { scale, mode: "max", thr: 140 }), { tessedit_pageseg_mode: "11" });
         hits.push(...findHeroes(passD, heroDict, scale));
@@ -184,7 +213,7 @@
       }
     }
 
-    if (new Set(hits.map(h => h.slug)).size < 10) {
+    if (new Set(hits.filter(h=>strength(h)>=.9&&!h.ambiguous).map(h=>h.slug)).size < 10) {
       onProgress("Reading dim text…", 0.7);
       const passE = await words(prep(src, {scale, mode:"gray"}), {tessedit_pageseg_mode:"11"});
       const passF = await words(prep(src, {scale, mode:"green",thr:130}), {tessedit_pageseg_mode:"11"});
@@ -192,7 +221,7 @@
       passC=passC.concat(passE,passF);
     }
     // keep the best hit per place on screen
-    hits.sort((a, b) => b.s - a.s || b.len - a.len);
+    hits.sort((a, b) => strength(b)-strength(a) || b.len - a.len);
     const cand = [];
     for (const h of hits) if (!cand.some(c => Math.abs(c.x - h.x) < W * 0.05 && Math.abs(c.y - h.y) < H * 0.05)) cand.push(h);
     if (cand.length < 4) return { ours: {}, theirs: {}, issues: ["Couldn't find hero names. Try a straighter, closer photo of the loading screen."], found: cand.length };
@@ -211,7 +240,7 @@
     const roleDict = ROLES.map(r => ({ slug: r, key: r }));
     const labelLines = await words(prep(src, { ...band, scale: 1.5, mode: "min", thr: 215 }), { tessedit_pageseg_mode: "11", tessedit_char_whitelist: "ACDEFGIJLMNOPRSUYK " });
     const labels = [];
-    for (const l of findTokens(labelLines, roleDict, 1.5, band.x, band.y).sort((a, b) => b.s - a.s)) if (!labels.some(x => x.slug === l.slug)) labels.push(l);
+    for (const l of findTokens(labelLines, roleDict, 1.5, band.x, band.y).sort((a, b) => strength(b)-strength(a))) if (!labels.some(x => x.slug === l.slug)) labels.push(l);
 
     // column x positions: from labels if possible, else from the heroes themselves
     let colX = null, order = null;
@@ -238,27 +267,28 @@
     const grid = { top: {}, bottom: {} };
     for (const c of cand) {
       const r = rowOf(c), i = colOf(c.x), cur = grid[r][i];
-      if (!cur || c.s > cur.s + 0.05 || (Math.abs(c.s - cur.s) <= 0.05 && c.y > cur.y)) grid[r][i] = c;
+      if (!cur || strength(c)>strength(cur)+.05 || (Math.abs(strength(c)-strength(cur))<=.05 && c.y>cur.y)) grid[r][i]=c;
     }
 
     // which row is ours: look for squad gamertags under each row
     const squadDict = squad.map(p => ({ slug: p.key, key: letters(p.label) }));
     const tagHits = [...findTokens(passA, squadDict, scale), ...findTokens(passB, squadDict, scale), ...findTokens(passC, squadDict, scale)];
-    let oursRow = null; const who = {};
-    for (const t of tagHits) {
+    const strongTags=tagHits.filter(t=>t.s===1&&t.c>=.9&&!t.ambiguous),tagRows=new Set(strongTags.map(rowOf));
+    let oursRow=tagRows.size===1?rowOf(strongTags[0]):null; const who={},whoRead={};
+    for (const t of tagHits.sort((a,b)=>strength(b)-strength(a))) {
       const r = t.y < splitY ? "top" : "bottom";
       oursRow ||= r;
-      if (r === oursRow && !who[t.slug]) who[t.slug] = order[colOf(t.x)];
+      if (r === oursRow && !who[t.slug]) {who[t.slug]=order[colOf(t.x)];whoRead[t.slug]=hitEvidence(t,t.slug,"gamertag");}
     }
     if (!oursRow) { oursRow = "bottom"; issues.push("Couldn't spot your gamertags — assumed your team is the bottom row."); }
     const theirRow = oursRow === "top" ? "bottom" : "top";
 
     const ours = {}, theirs = {};
     order.forEach((role, i) => {
-      if (grid[oursRow][i]) ours[role] = { hero: grid[oursRow][i].slug };
-      if (grid[theirRow][i]) theirs[role] = { hero: grid[theirRow][i].slug };
+      if (grid[oursRow][i]) ours[role] = {hero:grid[oursRow][i].slug,readConfidence:{hero:hitEvidence(grid[oursRow][i])}};
+      if (grid[theirRow][i]) theirs[role] = {hero:grid[theirRow][i].slug,readConfidence:{hero:hitEvidence(grid[theirRow][i])}};
     });
-    for (const [key, role] of Object.entries(who)) (ours[role] ||= {}).who = key;
+    for(const [key,role] of Object.entries(who)){const slot=ours[role]||={readConfidence:{}};slot.who=key;slot.readConfidence.who=whoRead[key];}
     for (const team of [ours, theirs]) {
       const seen = new Map();
       for (const role of ROLES) if (team[role]?.hero) {
@@ -270,12 +300,23 @@
     const missing = 10 - Object.keys(ours).filter(r => ours[r].hero).length - Object.keys(theirs).filter(r => theirs[r].hero).length;
     if (missing > 0) issues.push(`${missing} hero${missing > 1 ? "es" : ""} not read — pick ${missing > 1 ? "them" : "it"} below.`);
     onProgress("Done", 1);
-    return { ours, theirs, issues, found: cand.length, labels: labels.map(l => l.slug), oursRow };
+    const step=Math.abs(colX[1]-colX[0])||1;
+    const residual=labels.length?Math.max(...labels.map(l=>Math.abs(l.x-colX[order.indexOf(l.slug)])))/step:1;
+    const sortedLabels=labels.slice().sort((a,b)=>a.x-b.x);
+    const layout=evidence("role-order","lane-labels",{
+      ocr:labels.length?Math.min(...labels.map(l=>l.c)):0,
+      match:labels.length?Math.max(0,Math.min(1-residual,...labels.map(l=>l.s))):0
+    },labels.length===5&&order.every((r,i)=>sortedLabels[i].slug===r)&&labels.every(l=>!l.ambiguous)&&residual<=.1);
+    const ownTeam=evidence(oursRow,"gamertag",{
+      ocr:strongTags.length?Math.min(...strongTags.map(t=>t.c)):0,match:strongTags.length?1:0
+    },tagRows.size===1&&rowOf(strongTags[0])===oursRow);
+    if(!ownTeam.resolved&&!issues.some(s=>s.includes("gamertag")))issues.push("Confirm which team is yours.");
+    return {ours,theirs,issues,found:cand.length,labels:labels.map(l=>l.slug),oursRow,readConfidence:{layout,ownTeam}};
   }
 
   function median(a) { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; }
 
   root.LoadingScan = { scan, _lev: lev };
   // shared with the in-match scoreboard scanner
-  root.ScanKit = { toCanvas, prep, words, lev, getWorker };
+  root.ScanKit = {toCanvas,prep,words,lev,getWorker,findHeroes,findTokens,evidence,hitEvidence,strength,confidence};
 })(typeof window !== "undefined" ? window : globalThis);

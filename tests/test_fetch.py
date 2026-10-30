@@ -62,6 +62,22 @@ class FakeAPI:
 
 
 def main():
+    # Source provenance distinguishes missing fields from genuine zero.
+    raw=fake_match(900)
+    source=raw["matchPlayers"][0]
+    source["deaths"]=0;source.pop("wardsPlaced");source["heroDamage"]=None
+    p=fetch.normalise_match(raw,SQUAD)["players"][0]
+    assert p["measured"]["d"] and not p["measured"]["wards"] and not p["measured"]["heroDmg"]
+    assert p["measured"]["teamJungle"] and p["teamJungle"]==0
+    source.pop("inventoryItemData");assert not fetch.normalise_match(raw,SQUAD)["players"][0]["measured"]["items"]
+    source["inventoryItemData"]=[];assert fetch.normalise_match(raw,SQUAD)["players"][0]["measured"]["items"]
+    class Public:
+        def public_query(self,q):
+            if "heroes" in q:
+                return {"heroes":[{"id":"h","slug":"h","data":{"displayName":"Hero","attributes":[{"stat":"HEALTH","values":[500,600]}],"abilities":[{"key":"PRIMARY","displayName":"Skill","cost":[10,20],"cooldown":[9,8],"gameDescription":"Source text"}]}}]}
+            return {"items":[{"data":{"name":"Item","displayName":"Item","effects":[{"id":"e","name":"Passive","text":"Source","condition":"On hit","cooldown":None}],"stats":[]}}]}
+    h=fetch.fetch_heroes(Public())[0];assert h["abilities"][0]["cost"]==[10,20] and h["attributes"][0]["values"]==[500,600]
+    it=fetch.fetch_items(Public())[0];assert it["effects"][0]["condition"]=="On hit" and it["effects"][0]["cooldown"] is None
     with tempfile.TemporaryDirectory() as d:
         fetch.DATA = Path(d)
         api = FakeAPI()

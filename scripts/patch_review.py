@@ -1,8 +1,8 @@
 """Deterministic patch delta review. Official notes are linked, never blindly interpreted."""
 import hashlib,json
 from urllib.parse import urlparse
-HERO_FIELDS=("name","roles","classes","skills","abilities")
-ITEM_FIELDS=("label","cost","slot","rarity","type","class","hidden","stats","buildsFrom","blocks","blockedBy","icon","smallIcon")
+HERO_FIELDS=("name","roles","classes","skills","abilities","attributes")
+ITEM_FIELDS=("label","cost","slot","rarity","type","class","hidden","stats","buildsFrom","blocks","blockedBy","icon","smallIcon","effects")
 SETS={"roles","classes","buildsFrom","blocks","blockedBy"}
 def canonical(v):
     if isinstance(v,dict):return {k:canonical(x) for k,x in sorted(v.items())}
@@ -23,6 +23,12 @@ def catalogue(rows,key,fields):
             e[field]=canonical(value)
         out[ident]=e
     return out
+def logic_fingerprint(root):
+    """All code/data that can change optimizer prescriptions participates in review."""
+    from pathlib import Path
+    names=("docs/counterbuild.js","docs/buildplans.js","docs/optimizer.js","docs/profiles.js","docs/mechanics.js","config/item-mechanics.json","docs/optimizer-ui.js","docs/session.js","docs/match.js","docs/scan.js","docs/scoreboard.js","docs/photo-router.js","docs/scan-quality.js","docs/photo-time.js","docs/minimap.js","docs/match-focus.js","scripts/fetch.py","scripts/patch_review.py")
+    return digest({name:hashlib.sha256((Path(root)/name).read_bytes()).hexdigest() if (Path(root)/name).exists() else None for name in names})
+
 def snapshot(h,i,logic):
     v={'schema':1,'origin':'initial-baseline','patches':{'heroes':h.get('patch'),'items':i.get('patch')},'heroes':catalogue(h.get('heroes',[]),'slug',HERO_FIELDS),'items':catalogue(i.get('items',[]),'name',ITEM_FIELDS),'counterLogicFingerprint':logic}
     v['fingerprint']=digest(v);return v
@@ -53,7 +59,7 @@ if __name__=='__main__':
     root=Path(__file__).resolve().parent.parent
     ap=argparse.ArgumentParser();ap.add_argument('--approve',action='store_true');ap.add_argument('--reviewer');ap.add_argument('--notes-url');ap.add_argument('--confirm-reviewed',action='store_true');args=ap.parse_args()
     load=lambda p:json.loads((root/p).read_text()) if (root/p).exists() else {}
-    h=load('docs/data/heroes.json');i=load('docs/data/items.json');logic=hashlib.sha256((root/'docs/counterbuild.js').read_bytes()).hexdigest();base=load('config/patch-baseline.json');policy=load('config/patch-policy.json')
+    h=load('docs/data/heroes.json');i=load('docs/data/items.json');logic=logic_fingerprint(root);base=load('config/patch-baseline.json');policy=load('config/patch-policy.json')
     cur=snapshot(h,i,logic)
     if args.approve:
         u=urlparse(args.notes_url or '')

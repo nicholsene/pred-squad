@@ -13,7 +13,13 @@
 (function (root) {
   "use strict";
   const ROLES = ["OFFLANE", "JUNGLE", "MIDLANE", "SUPPORT", "CARRY"];
-  const GOLD = /(\d{1,2})[,.](\d{3})/;
+  const GOLD = /^(\d{1,2})[,.](\d{3})g?$/i;
+  const clamp=x=>Math.max(0,Math.min(1,x));
+  const evidence=(value,source,metrics,resolved=true,extra={})=>({value,source,metrics,resolved,...extra});
+  function parseGold(text){const m=GOLD.exec(String(text||"").replace(/\s+/g,""));return m?+(m[1]+m[2]):null;}
+  function parseCount(text){const s=String(text??"").replace(/\s+/g,"");return /^\d{1,5}$/.test(s)?+s:null;}
+  const MIN_MARGIN=.05;
+  const readStrength=e=>e?.resolved&&!e.disputed&&Object.keys(e.metrics||{}).length?Math.min(...Object.values(e.metrics)):0;
   const TW = 14, TH = 22;            // template size
   const BASE_W = 2576;               // photos are normalised to this width (page = 2x this)
   let TPL = null;
@@ -82,19 +88,21 @@
     for (let i = 0; i < a.length; i++) { ab += a[i] * t[i]; aa += a[i] * a[i]; bb += t[i] * t[i]; }
     return ab / (Math.sqrt(aa * bb) + 1e-9);
   }
-  function classify(img, T, allowed = "0123456789") {
-    let best = ["?", -2]; for (const ch of allowed) { const s = score(img, T[ch]); if (s > best[1]) best = [ch, s]; }
-    return best;
+  function classify(img,T,allowed="0123456789"){
+    const ranked=[...allowed].map(ch=>[ch,score(img,T[ch])]).sort((a,b)=>b[1]-a[1]);
+    return [ranked[0][0],ranked[0][1],ranked.length>1?ranked[0][1]-ranked[1][1]:Infinity];
   }
-  /** read one number; a too-wide blob is tried as two touching digits (e.g. "11") */
-  function readDigits(bl, T) {
-    let s = "";
-    for (const b of bl) {
-      const [ch, sc] = classify(b.img, T);
-      if (b.w > 0.75 * b.h && sc < 0.75) { s += "11"; continue; }
-      s += ch;
+  /** Preserve suggestions from touching digits, but never certify an inferred glyph. */
+  function readDigits(bl,T){
+    let text="",correlation=1,margin=Infinity,resolved=bl.length>0;
+    for(const blob of bl){
+      const [ch,sc,gap]=classify(blob.img,T);
+      correlation=Math.min(correlation,clamp(sc));margin=Math.min(margin,gap);
+      if(blob.w>.75*blob.h&&sc<.75){text+="11";resolved=false;}
+      else text+=ch;
+      if(gap<MIN_MARGIN)resolved=false;
     }
-    return s;
+    return {text,correlation,margin,resolved};
   }
   function group3(bl, u) {
     if (bl.length < 3) return null;
@@ -105,27 +113,99 @@
   }
 
   /* ---------- OCR helpers (shared Tesseract worker from scan.js) ---------- */
-  async function ocrBox(src, f, box, params, up = 2, thr = 175, mode = "max") {
+  async function ocrBoxRead(src, f, box, params, up = 2, thr = 175, mode = "max") {
     const K = root.ScanKit;
     const c = K.prep(src, { x: box[0] / (2 * f), y: box[1] / (2 * f), w: (box[2] - box[0]) / (2 * f), h: (box[3] - box[1]) / (2 * f), scale: 2 * f * up, mode, thr });
     const lines = await K.words(c, params);
-    return lines.map(l => l.map(w => w.t).join(" ")).join(" ").trim();
+    return {lines,words:lines.flat(),text:lines.map(l=>l.map(w=>w.t).join(" ")).join(" ").trim()};
   }
-  async function anchors(src, f) {
-    const K = root.ScanKit, out = [];
-    for (const thr of [175, 140]) {
-      const c = K.prep(src, { scale: f, mode: "max", thr });
-      for (const line of await K.words(c, { tessedit_pageseg_mode: "11" }))
-        for (const w of line) {
-          if (!GOLD.test(w.t) || w.t.length > 9) continue;
-          const x = (w.x0 + w.x1), y = (w.y0 + w.y1);       // page coords (2x)
-          if (!out.some(o => Math.abs(o.x - x) < 40 && Math.abs(o.y - y) < 40)) out.push({ t: w.t, x, y });
-        }
-      const W = c.width * 2, L = out.filter(o => o.x < W / 2).length;
-      if (L >= 2 && out.length - L >= 2) break;            // good enough, skip the second pass
+  const ocrBox=async(...args)=>(await ocrBoxRead(...args)).text;
+  function countRead(read,isGold){
+    const words=read.words.filter(w=>/\d/.test(w.t)),text=words.map(w=>w.t).join("");
+    const value=isGold?parseGold(text):parseCount(text);
+    return {value,readConfidence:evidence(value,"ocr",{ocr:root.ScanKit.confidence(words)},value!==null)};
+  }
+  async function anchors(src, f, heroDict, squadDict) {
+    const K=root.ScanKit,out={golds:[],heroes:[],tags:[]};
+    for(const [mode,thr,up] of [["max",175,1],["max",140,1],["gray",140,1],["max",175,2]]){
+      const c=K.prep(src,{scale:f*up,mode,thr});
+      const lines=await K.words(c,{tessedit_pageseg_mode:"11"});
+      // Only comma-formatted gold anchors are safe on the whole image. Live CS is separate.
+      for(const w of lines.flat()){
+        if(parseGold(w.t)===null||w.t.length>9)continue;
+        const hit={t:w.t,c:K.confidence([w]),x:(w.x0+w.x1)/up,y:(w.y0+w.y1)/up};
+        const old=out.golds.find(o=>Math.abs(o.x-hit.x)<40&&Math.abs(o.y-hit.y)<40);
+        if(!old)out.golds.push(hit);else if(hit.c>old.c)Object.assign(old,hit);
+      }
+      for(const hit of K.findHeroes(lines,heroDict,up/2)){
+        const old=out.heroes.find(o=>Math.abs(o.x-hit.x)<40&&Math.abs(o.y-hit.y)<40);
+        if(!old)out.heroes.push(hit);else if(K.strength(hit)>K.strength(old))Object.assign(old,hit);
+      }
+      out.tags.push(...K.findTokens(lines,squadDict,up/2));
+      const W=c.width*2/up;
+      if(["L","R"].every(side=>out.golds.filter(g=>(g.x<W/2)===(side==="L")).length===5))break;
+      if(heroGeometry(out.heroes,W,c.height*2/up)?.confidence.resolved)break;
     }
     return out;
   }
+  // The live board has no earned-gold column. Locate its rows from all ten actual
+  // hero labels; fixed screen coordinates alone never establish this profile.
+  function heroGeometry(hits,W,H){
+    const observed={},ys=[];
+    for(const side of ["L","R"]){
+      // Low-strength canonical reads can locate review crops, never certify them.
+      const candidates=hits.filter(h=>h.c>=.1&&h.s>=.75&&h.y>H*.15&&
+        Number.isFinite(h.x0)&&(h.x<W/2)===(side==="L")).sort((a,b)=>a.y-b.y);
+      const groups=[];
+      for(const hit of candidates){
+        let group=groups.find(g=>Math.abs(g[0].y-hit.y)<H*.018);
+        if(!group)groups.push(group=[]);group.push(hit);
+      }
+      if(groups.length<3||groups.length>5)return null;
+      observed[side]=groups.map(g=>g.sort((a,b)=>root.ScanKit.strength(b)-root.ScanKit.strength(a))[0]);
+      if(new Set(observed[side].map(h=>h.slug)).size!==observed[side].length)return null;
+      ys.push(...observed[side].map(h=>h.y));
+    }
+    const u=fitDy(Object.values(observed).map(row=>row.map(h=>h.y)),H);
+    if(!u)return null;
+    const first=Math.min(...ys),span=Math.round((Math.max(...ys)-first)/u);
+    if(span>4)return null;
+    // Missing outside rows make the lane offset ambiguous. Center the review
+    // crops on the observed rows and leave layout unresolved.
+    const offset=Math.floor((4-span)/2),rows={},errors=[];
+    let complete=span===4,actualCount=0;
+    for(const side of ["L","R"]){
+      const indexed=new Map();
+      for(const hit of observed[side]){
+        const index=Math.round((hit.y-first)/u)+offset;
+        if(index<0||index>4||indexed.has(index))return null;
+        indexed.set(index,hit);
+      }
+      const entries=[...indexed],base=median(entries.map(([i,h])=>h.y-i*u));
+      const n=entries.length,sx=entries.reduce((s,[i])=>s+i,0),sy=entries.reduce((s,[,h])=>s+h.x0,0);
+      const sxx=entries.reduce((s,[i])=>s+i*i,0),sxy=entries.reduce((s,[i,h])=>s+i*h.x0,0);
+      const dx=(n*sxy-sx*sy)/(n*sxx-sx*sx||1),x0=(sy-dx*sx)/n;
+      for(const [i,h]of entries){
+        errors.push(Math.abs(h.y-base-i*u)/u);
+        if(Math.abs(h.x0-x0-i*dx)>.6*u)return null;
+      }
+      rows[side]=Array.from({length:5},(_,i)=>{
+        const hit=indexed.get(i);
+        if(hit){actualCount++;return hit;}
+        complete=false;
+        return {slug:null,x0:x0+i*dx,x:x0+i*dx,y:base+i*u,c:0,s:0,ambiguous:true,inferred:true};
+      });
+    }
+    const residual=Math.max(...errors);
+    if(residual>.15)return null;
+    const actual=Object.values(observed).flat();
+    const resolved=complete&&actualCount===10&&residual<=.1&&
+      actual.every(h=>h.c>=.9&&h.s>=.9&&!h.ambiguous);
+    return {rows,u,actualCount,confidence:evidence("role-order","hero-grid",{
+      ocr:actualCount===10?Math.min(...actual.map(h=>h.c)):0,match:clamp(1-residual)
+    },resolved)};
+  }
+
   function fitDy(sides, H) {
     let best = null;
     for (let dy = Math.round(H * 0.07); dy < H * 0.16; dy++) {
@@ -138,11 +218,11 @@
   }
   const median = a => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
 
-  function inventory(src,f,gx,gy,u,side,opts) {
+  function inventory(src,f,gx,gy,u,side,opts,liveHero) {
     const names=[],previews=[],candidates=[],allowed=(opts.items||[]).filter(i=>i.slot==="PASSIVE").map(i=>i.name);
     for(let i=0;i<6;i++){
       // Six equipment slots follow the larger crest slot below the level circle.
-      const cx=gx+(side==="L"?-3.14+i*.45:1.63+i*.45)*u,cy=gy-.20*u,size=.38*u;
+      const cx=liveHero?liveHero.x0+((side==="L"?.35:.25)+i*.42)*u:gx+(side==="L"?-3.14+i*.45:1.63+i*.45)*u,cy=liveHero?liveHero.y+.33*u:gy-.20*u,size=.38*u;
       const c=document.createElement("canvas");c.width=c.height=48;const g=c.getContext("2d");
       g.drawImage(src,(cx-size/2)/(2*f),(cy-size/2)/(2*f),size/(2*f),size/(2*f),0,0,48,48);
       const result=root.ItemVision?root.ItemVision.match(g.getImageData(0,0,48,48),opts.itemTemplates,{patch:opts.patch,allowedNames:allowed.length?allowed:undefined}):{name:null,reason:"no_templates",confidence:0,alternatives:[]};
@@ -159,18 +239,37 @@
       const original = await scan(file._originalSource, {...opts,_singlePass:true});
       const corrected = await scan(file, {...opts,_singlePass:true});
       let disagreements=0;
-      for (const side of ["ours","theirs"]) for (let i=0;i<5;i++) {
-        const raw=original[side]?.[i]||{}, row=corrected[side]?.[i]; if(!row)continue;
-        if(!row.hero)row.hero=raw.hero||null;
-        row.alternatives={};
-        for(const key of ["lvl","k","d","a","gold"]) {
-          if(raw[key]!=null && row[key]!=null && raw[key]!==row[key]) { row.alternatives[key]=[raw[key],row[key]]; disagreements++; }
-          // Keep the established original-photo digit path; corrected crops fill blanks.
-          if(raw[key]!=null)row[key]=raw[key];
+      const sameLayout=original.sourceLayout===corrected.sourceLayout,rawLayout=original.readConfidence?.layout?.resolved===true;
+      for(const side of ["ours","theirs"])for(let i=0;i<5;i++){
+        const raw=original[side]?.[i]||{},row=corrected[side]?.[i];if(!row)continue;
+        row.readConfidence||={};row.alternatives||={};
+        for(const key of ["hero","lvl","k","d","a","cs","gold"]){
+          if(!sameLayout&&["cs","gold"].includes(key))continue;
+          const conflict=raw[key]!=null&&row[key]!=null&&raw[key]!==row[key];
+          if(conflict){row.alternatives[key]=[raw[key],row[key]];disagreements++;}
+          const useRaw=raw[key]!=null&&((rawLayout&&sameLayout&&key!=="hero"&&(conflict||readStrength(raw.readConfidence?.[key])>readStrength(row.readConfidence[key])))||row[key]==null);
+          if(useRaw){
+            row[key]=raw[key];row.readConfidence[key]={...raw.readConfidence?.[key],value:raw[key]};
+            if(!rawLayout||!sameLayout)row.readConfidence[key].resolved=false;
+          }else if(rawLayout&&sameLayout&&raw[key]===row[key]&&
+            readStrength(raw.readConfidence?.[key])>readStrength(row.readConfidence[key]))
+            row.readConfidence[key]={...raw.readConfidence[key]};
+          if(conflict)row.readConfidence[key]={...row.readConfidence[key],disputed:true};
+        }
+        for(let j=0;j<6;j++)if(raw.items?.[j]!=null&&row.items?.[j]!=null&&raw.items[j]!==row.items[j]){
+          const e=row.readConfidence.items?.[j];if(e)e.disputed=true;
         }
       }
-      corrected.issues = disagreements ? [`${disagreements} number reads disagree between views. Check the highlighted fields.`] : corrected.issues;
-      corrected.method="original digits with straightened hero/crop fallback";
+      corrected.readConfidence||={};
+      if(!sameLayout&&rawLayout&&corrected.readConfidence.layout?.resolved)
+        corrected.readConfidence.layout={...corrected.readConfidence.layout,disputed:true};
+      if(corrected.readConfidence.ownTeam?.resolved&&original.readConfidence?.ownTeam?.resolved&&
+        corrected.readConfidence.ownTeam.value!==original.readConfidence.ownTeam.value)
+        corrected.readConfidence.ownTeam={...corrected.readConfidence.ownTeam,disputed:true};
+      if(!corrected.readConfidence.ownTeam?.resolved&&original.readConfidence?.ownTeam?.resolved&&sameLayout)
+        corrected.readConfidence.ownTeam={...original.readConfidence.ownTeam};
+      if(disagreements)corrected.issues.push(`${disagreements} reads disagree between views. Check the highlighted fields.`);
+      corrected.method="compared original and straightened reads";
       return corrected;
     }
     const K = root.ScanKit, T = await templates();
@@ -179,8 +278,18 @@
     const rawIconSource=document.createElement("canvas"),rawImage=await createImageBitmap(file);
     rawIconSource.width=rawImage.width;rawIconSource.height=rawImage.height;rawIconSource.getContext("2d").drawImage(rawImage,0,0);rawImage.close();
     const W = 2 * BASE_W, H = 2 * src.height * f, issues = [];
-    const aligned = !!file._screenAligned;
-    const golds = aligned ? [] : (await anchors(src, f)).filter(g => g.y > H * 0.15);
+    const aligned=!!file._screenAligned;
+    const heroDict=heroes.map(h=>({slug:h.slug,key:h.name.toUpperCase().replace(/[^A-Z]/g,"")}));
+    const squadDict=(opts.squad||[]).map(p=>({slug:p.key,key:p.label.toUpperCase().replace(/[^A-Z]/g,"")}));
+    const detected=await anchors(src,f,heroDict,squadDict);let heroGrid=heroGeometry(detected.heroes,W,H);
+    const golds=detected.golds.filter(g=>g.y>H*.15);
+    if(aligned&&!golds.length&&!heroGrid){
+      const step=H*.13,rows={};
+      for(const side of ["L","R"])rows[side]=ROLES.map((_,i)=>({slug:null,x0:W*(side==="L"?.16:.68),x:W*(side==="L"?.16:.68),y:H*.20+i*step,c:0,s:0,ambiguous:true,inferred:true}));
+      heroGrid={u:step,rows,confidence:evidence("role-order","heuristic-framed-grid",{match:0},false)};
+    }
+    const live=!!heroGrid&&!golds.length;
+    const tagReads=[];
     onProgress("Finding rows…", 0.35);
     const sides = {};
     for (const [side, sel] of [["L", g => g.x < W / 2], ["R", g => g.x >= W / 2]]) {
@@ -188,11 +297,15 @@
       if (gs.length) { const mx = median(gs.map(g => g.x)); gs = gs.filter(g => Math.abs(g.x - mx) < W * 0.04); }
       sides[side] = gs.sort((a, b) => a.y - b.y);
     }
-    if (!aligned && !sides.L.length && !sides.R.length) return { ours: [], theirs: [], issues: ["Couldn't find the scoreboard. Take the photo straight on with the whole board in frame."] };
-    const u = aligned ? H * .135 : fitDy(Object.values(sides).filter(s => s.length >= 2).map(s => s.map(g => g.y)), H) || H * 0.11;
-    const tops = aligned ? { L:{y0:H*.32,x0:W*.417,dx:0,span:4,off:0},R:{y0:H*.32,x0:W*.58,dx:0,span:4,off:0} } : {};
+    if(!aligned&&!live&&!sides.L.length&&!sides.R.length)
+      return {ours:[],theirs:[],issues:["Couldn't locate ten clear scoreboard hero labels or gold anchors. Try a closer, straighter photo."],sourceLayout:"unknown"};
+    const u=live?heroGrid.u:fitDy(Object.values(sides).filter(s=>s.length>=2).map(s=>s.map(g=>g.y)),H)||(aligned?H*.135:H*.11);
+    const tops=live?Object.fromEntries(["L","R"].map(side=>{
+      const hs=heroGrid.rows[side],xs=hs.map(h=>h.x0+(side==="L"?3.38:-1.52)*u);
+      return [side,{y0:hs[0].y+.31*u,x0:xs[0],dx:(xs[4]-xs[0])/4,span:4,off:0}];
+    })):aligned?{L:{y0:H*.32,x0:W*.417,dx:0,span:4,off:0},R:{y0:H*.32,x0:W*.58,dx:0,span:4,off:0}}:{};
     for (const [side, gs] of Object.entries(sides)) {
-      if (!gs.length) continue;
+      if (!gs.length||live) continue;
       const idx = gs.map(g => Math.round((g.y - gs[0].y) / u));
       const span = Math.max(...idx), dx = span ? (gs[gs.length - 1].x - gs[0].x) / span : 0;
       tops[side] = { y0: gs[0].y, x0: gs[0].x, dx, span };
@@ -214,25 +327,55 @@
       t.off = best[1];
     }
     onProgress("Reading numbers…", 0.6);
-    const heroDict = heroes.map(h => ({ slug: h.slug, key: h.name.toUpperCase().replace(/[^A-Z]/g, "") }));
-    const result = { L: [], R: [] };
+    const goldResiduals=Object.values(sides).flatMap(gs=>gs.map(g=>{
+      const t=gs[0],index=Math.round((g.y-t.y)/u);return Math.abs(g.y-t.y-index*u)/u;
+    }));
+    const goldGridResolved=["L","R"].every(side=>sides[side].length===5&&
+      new Set(sides[side].map(g=>Math.round((g.y-sides[side][0].y)/u))).size===5)&&
+      goldResiduals.every(x=>x<=.1);
+    const layout=live?heroGrid.confidence:evidence("role-order","gold-grid",{
+      ocr:golds.length?Math.min(...golds.map(g=>g.c)):0,
+      match:goldResiduals.length?clamp(1-Math.max(...goldResiduals)):0
+    },goldGridResolved);
+    const sourceLayout=live?"live":goldGridResolved?"gold":"unknown";
+    const result={L:[],R:[]};
+    // Restrict global exact-tag matches to the detected name bands.
+    for(const tag of detected.tags){
+      const side=tag.x<W/2?"L":"R",t=tops[side];if(!t)continue;
+      for(let i=0;i<5;i++){
+        const h=live?heroGrid.rows[side][i]:null;
+        const gy=t.y0+(i-t.off)*u,gx=t.x0+(i-t.off)*t.dx;
+        const x0=h?h.x0:gx+(side==="L"?-3.45:1.38)*u,y=h?h.y:gy-.4*u;
+        if(tag.x>=x0-.1*u&&tag.x<=x0+2.5*u&&tag.y>=y-.4*u&&tag.y<=y+.13*u)
+          tagReads.push({...tag,side,index:i});
+      }
+    }
     for (const side of ["L", "R"]) {
       const t = tops[side] || (() => { const o = tops[side === "L" ? "R" : "L"]; return { y0: o.y0 - o.off * u, x0: side === "L" ? W - o.x0 : W - o.x0, dx: -o.dx, span: 0, off: 0 }; })();
       for (let i = 0; i < 5; i++) {
         let gy = t.y0 + (i - t.off) * u, gx = t.x0 + (i - t.off) * t.dx; const role = ROLES[i];
-        const row = { role, hero: (known[side] || [])[i] || null, lvl: null, k: null, d: null, a: null, gold: null };
+        const liveHero=live?heroGrid.rows[side][i]:null;
+        if(liveHero){gy=liveHero.y+.31*u;gx=liveHero.x0+(side==="L"?3.38:-1.52)*u;}
+        const row={role,hero:(known[side]||[])[i]||null,lvl:null,k:null,d:null,a:null,gold:null,cs:null,readConfidence:{}};
+        if(row.hero)row.readConfidence.hero=evidence(row.hero,"known-lineup",{},false);
+        if(liveHero){row.hero=liveHero.slug;row.readConfidence.hero=K.hitEvidence(liveHero);}
+        if(live)row.readConfidence.gold=evidence(null,"not-displayed",{},false,{available:false});
         // K / D / A
-        const kb = blobs(grab(src, f, [gx - 0.42 * u, gy - 0.6 * u, gx + 0.42 * u, gy - 0.38 * u], "max"), 0.35, 0.95);
+        const kb=blobs(grab(src,f,liveHero?[gx-.42*u,liveHero.y-.18*u,gx+.42*u,liveHero.y+.09*u]:[gx-.42*u,gy-.6*u,gx+.42*u,gy-.38*u],"max"),.35,.95);
         const g3 = group3(kb, u);
         if (g3) {
-          const n = g3.map(g => parseInt(readDigits(g, T), 10)); [row.k, row.d, row.a] = n.map(x => isNaN(x) || x > 60 ? null : x);
+          g3.forEach((g,j)=>{
+            const read=readDigits(g,T),key=["k","d","a"][j],n=parseInt(read.text,10),max=key==="a"?100:60;
+            row[key]=Number.isInteger(n)&&n<=max?n:null;
+            row.readConfidence[key]=evidence(row[key],"digit-template",{correlation:read.correlation},read.resolved&&row[key]!==null,{margin:read.margin});
+          });
           // re-centre the row on the D column: more precise than the OCR'd gold box
           const mid = g3[1], cx = mid.reduce((s, b) => s + b.x, 0) / mid.length, cy = kb.reduce((s, b) => s + b.y, 0) / kb.length;
           if (Math.abs(cx - gx) < 0.3 * u) gx = cx;
-          if (Math.abs(cy + 0.49 * u - gy) < 0.15 * u) gy = cy + 0.49 * u;
+          if(!liveHero&&Math.abs(cy+.49*u-gy)<.15*u)gy=cy+.49*u;
         }
         // level, inside the circle by the name
-        const lc = side === "L" ? [gx - 3.59 * u, gy - 0.5 * u] : [gx + 1.18 * u, gy - 0.53 * u];
+        const lc=liveHero?[liveHero.x0-.22*u,liveHero.y-.09*u]:side==="L"?[gx-3.59*u,gy-.5*u]:[gx+1.18*u,gy-.53*u];
         const win = grab(src, f, [lc[0] - 0.19 * u, lc[1] - 0.17 * u, lc[0] + 0.19 * u, lc[1] + 0.17 * u], "min");
         const cand = blobs(win, 0.06 * u / win.h, 0.17 * u / win.h, 90).filter(b => b.w < 0.12 * u);
         if (opts.debug) row._lv = cand.map(b => `${((b.x - lc[0]) / u).toFixed(2)},${((b.y - lc[1]) / u).toFixed(2)} h${(b.h / u).toFixed(2)} w${(b.w / u).toFixed(2)}`);
@@ -240,50 +383,66 @@
           const first = cand.reduce((a, b) => Math.abs(b.x - lc[0]) < Math.abs(a.x - lc[0]) ? b : a);
           let grp = cand.filter(b => Math.abs(b.x - first.x) < 0.13 * u && Math.abs(b.h - first.h) < 0.35 * first.h);
           grp = grp.sort((a, b) => Math.abs(a.x - first.x) - Math.abs(b.x - first.x)).slice(0, 2).sort((a, b) => a.x - b.x);
-          const lv = grp.length === 2 ? parseInt("1" + classify(grp[1].img, T, "012345678")[0], 10) : parseInt(classify(grp[0].img, T, "123456789")[0], 10);
-          if (lv >= 1 && lv <= 18) row.lvl = lv;
+          const read=readDigits(grp,T),lv=parseInt(read.text,10);
+          if(lv>=1&&lv<=18)row.lvl=lv;
+          row.readConfidence.lvl=evidence(row.lvl,"digit-template",{correlation:read.correlation},read.resolved&&row.lvl!==null,{margin:read.margin});
         }
-        // gold
-        const near = sides[side].find(g => Math.abs(g.y - gy) < 0.3 * u);
-        let m = near && GOLD.exec(near.t);
-        if (!m) m = GOLD.exec(await ocrBox(src, f, [gx - 0.45 * u, gy - 0.11 * u, gx + 0.45 * u, gy + 0.11 * u], { tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789,g" }));
-        if (!m && aligned) m = GOLD.exec(await ocrBox(src,f,[gx-.5*u,gy-.14*u,gx+.5*u,gy+.14*u],{tessedit_pageseg_mode:"7",tessedit_char_whitelist:"0123456789,g"},3,140,"gray"));
-        if (m) row.gold = parseInt(m[1] + m[2], 10);
-        // hero name, only if the lineup isn't known
-        if (!row.hero && heroDict.length) {
-          const hb = side === "L" ? [gx - 3.45 * u, gy - 0.56 * u, gx - 1.5 * u, gy - 0.31 * u] : [gx + 1.38 * u, gy - 0.56 * u, gx + 3.5 * u, gy - 0.31 * u];
-          const read = async (box, psm, thr) => (await ocrBox(src, f, box, { tessedit_pageseg_mode: psm, tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ.& " }, 2, thr)).toUpperCase().replace(/[^A-Z]/g, "");
-          const match = txt => {
-            let best = null;
-            for (const h of heroDict) {
-              const L = h.key.length, lim = L <= 3 ? 0 : L <= 5 ? 1 : 2;
-              for (let n = Math.max(1, L - 1); n <= L + 1; n++) for (let i = 0; i + n <= txt.length; i++) {
-                const d = K.lev(txt.slice(i, i + n), h.key);
-                if (d <= lim && (!best || d < best[0] || (d === best[0] && L > best[2]))) best = [d, h.slug, L];
-              }
-            }
-            return best;
-          };
-          let txt = await read(hb, "7", 175), best = match(txt);
-          if (!best) { txt = await read([hb[0], gy - 0.62 * u, hb[2], gy - 0.26 * u], "6", 175); best = match(txt); }
-          if (!best) { txt = await read(hb, "7", 140); best = match(txt); }
-          if (!best) {
-            txt = (await ocrBox(src,f,hb,{tessedit_pageseg_mode:"7",tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ.& "},3,140,"gray")).toUpperCase().replace(/[^A-Z]/g, "");
-            best = match(txt);
+        // The live board's yellow value is CS; only the legacy comma-gold profile yields earned gold.
+        const field=live?"cs":"gold",near=!live&&sides[side].find(g=>Math.abs(g.y-gy)<.3*u);
+        if(near){
+          row.gold=parseGold(near.t);
+          row.readConfidence.gold=evidence(row.gold,"ocr",{ocr:near.c},row.gold!==null);
+        }else{
+          let best=null;
+          for(const [mode,thr,up] of [["max",175,2],["gray",140,3]]){
+            const read=await ocrBoxRead(src,f,[gx-.45*u,gy-.13*u,gx+.45*u,gy+.13*u],
+              {tessedit_pageseg_mode:"7",tessedit_char_whitelist:live?"0123456789":"0123456789,g"},up,thr,mode);
+            const candidate=countRead(read,!live);
+            if(candidate.value!==null&&(!best||candidate.readConfidence.metrics.ocr>best.readConfidence.metrics.ocr))best=candidate;
+            if(best?.readConfidence.metrics.ocr>=.9)break;
           }
-          if (opts.debug) row._hero = txt;
-          if (best) row.hero = best[1];
+          if(best){row[field]=best.value;row.readConfidence[field]=best.readConfidence;}
         }
-        Object.assign(row,inventory(rawIconSource,f,gx,gy,u,side,opts));
+        // Hero OCR also contains the gamertag. Keep confidence for the matched words only.
+        if(heroDict.length&&(!liveHero||K.strength(liveHero)<.9||liveHero.ambiguous||!tagReads.some(t=>t.s===1&&t.c>=.9&&!t.ambiguous))){
+          const hb=liveHero?[liveHero.x0-.04*u,liveHero.y-.34*u,liveHero.x0+2.5*u,liveHero.y+.14*u]:
+            side==="L"?[gx-3.45*u,gy-.62*u,gx-1.5*u,gy-.26*u]:[gx+1.38*u,gy-.62*u,gx+3.5*u,gy-.26*u];
+          let best=liveHero;
+          for(const [mode,thr,psm] of [["max",175,"6"],["max",140,"6"],["gray",140,"6"]]){
+            const read=await ocrBoxRead(src,f,hb,{tessedit_pageseg_mode:psm,tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ.& "},2,thr,mode);
+            const hits=K.findHeroes(read.lines,heroDict,1).sort((a,b)=>K.strength(b)-K.strength(a));
+            if(hits.length&&(!best||K.strength(hits[0])>K.strength(best)))best=hits[0];
+            for(const tag of K.findTokens(read.lines,squadDict,1))tagReads.push({...tag,side,index:i});
+            if(opts.debug)row._hero=read.text;
+            if(best&&K.strength(best)>=.9&&!best.ambiguous&&
+              (!squadDict.length||tagReads.some(t=>t.s===1&&t.c>=.9&&!t.ambiguous)))break;
+          }
+          if(best){row.hero=best.slug;row.readConfidence.hero=K.hitEvidence(best);}
+        }
+        Object.assign(row,inventory(rawIconSource,f,gx,gy,u,side,opts,liveHero));
+        row.readConfidence.items=row.itemCandidates.map(c=>evidence(c.name||null,"item-template",{similarity:c.confidence||0},c.reason==="visual_suggestion"&&!!c.name,{state:c.name?"item":"unknown"}));
         result[side].push(row);
         onProgress("Reading numbers…", 0.6 + 0.4 * (result.L.length + result.R.length) / 10);
       }
     }
-    const missing = [...result.L, ...result.R].filter(r => r.k == null || r.gold == null).length;
+    const strongTags=tagReads.filter(t=>t.s===1&&t.c>=.9&&!t.ambiguous);
+    const teamSides=new Set(strongTags.map(t=>t.side));
+    const ownTeam=evidence(strongTags[0]?.side==="R"?"right":"left","gamertag",{
+      ocr:strongTags.length?Math.min(...strongTags.map(t=>t.c)):0,match:strongTags.length?1:0
+    },teamSides.size===1);
+    for(const t of strongTags.filter(t=>t.side==="L")){
+      const row=result.L[t.index];if(!row)continue;
+      if(row.who&&row.who!==t.slug){row.readConfidence.who.disputed=true;continue;}
+      row.who=t.slug;row.readConfidence.who=K.hitEvidence(t,t.slug,"gamertag");
+    }
+    const missing=[...result.L,...result.R].filter(r=>["lvl","k","d","a",live?"cs":"gold"].some(k=>r[k]==null)).length;
     if (missing) issues.push(`${missing} row${missing === 1 ? "" : "s"} only partly read — check the numbers.`);
     onProgress("Done", 1);
-    return { ours: result.L, theirs: result.R, issues, rowHeight: u };
+    if(!layout.resolved)issues.push("Row alignment needs review; uncertain hero reads locate crops only.");
+    if(!ownTeam.resolved)issues.push("Confirm which team is yours.");
+    return {ours:result.L,theirs:result.R,issues,rowHeight:u,sourceLayout,readConfidence:{layout,ownTeam}};
   }
 
-  root.ScoreboardScan = { scan };
+  root.ScoreboardScan={scan,_parseGold:parseGold,_parseCount:parseCount,_heroGeometry:heroGeometry};
+  if(typeof module!=="undefined")module.exports=root.ScoreboardScan;
 })(typeof window !== "undefined" ? window : globalThis);

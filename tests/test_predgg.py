@@ -21,3 +21,16 @@ with patch.dict(os.environ,{"PREDGG_CLIENT_ID":"fake-id","PREDGG_CLIENT_SECRET":
     try: api._refresh_token();raise AssertionError("expected invalid-credential failure")
     except PredGGError: assert s.calls==1
 print("ok: transient token errors retry, retry limit, and invalid-credential rejection")
+
+# Public catalog queries bypass token refresh even when credentials are unhealthy.
+class PublicResponse:
+    status_code=200
+    def json(self):return {"data":{"items":[]}}
+class PublicSession:
+    headers={}
+    def post(self,*args,**kwargs):
+        assert "Authorization" not in kwargs["headers"]
+        return PublicResponse()
+with patch.object(PredGG,"_auth_header",side_effect=AssertionError("public query requested OAuth")):
+    assert PredGG(session=PublicSession()).public_query("{items{name}}")=={"items":[]}
+print("ok: public metadata queries do not depend on OAuth")
