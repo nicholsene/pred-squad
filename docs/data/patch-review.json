@@ -2,8 +2,8 @@
   "schema": 1,
   "status": "source-incomplete",
   "reviewRequired": true,
-  "fingerprint": "19d98eb7a70cb3a6fd322c8704610cff26f8c9435e70249c0002e38aa967ed2a",
-  "baselineFingerprint": "19d98eb7a70cb3a6fd322c8704610cff26f8c9435e70249c0002e38aa967ed2a",
+  "fingerprint": "86dcbdfab5404d008191a38376024cae9f35c335a1c708fcc95036b1231ef76b",
+  "baselineFingerprint": "86dcbdfab5404d008191a38376024cae9f35c335a1c708fcc95036b1231ef76b",
   "patches": {
     "heroes": "1.17.2",
     "items": "1.17.2"

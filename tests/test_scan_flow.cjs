@@ -35,6 +35,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  assert.equal(await page.locator("#scan-review").isHidden(),true);
  assert(!JSON.stringify(board).includes("readConfidence")&&!JSON.stringify(board).includes("data:image"));
  assert(await page.evaluate(()=>window.__said.length>0),"reading and accepted update can use speech");
+ await page.locator("#me").selectOption("");assert.equal(await page.locator(".mf-lane.mine").count(),0,"unassigned identity must not highlight any lane as yours");await page.locator("#me").selectOption(fixture.who);
  // Adjusting the match clock during OCR invalidates its captured observation context.
  const oldScan=board.scanId;await install("deferred");await upload();await page.waitForFunction(()=>typeof window.__finishOCR==="function");
  await page.evaluate(()=>document.querySelector('[data-adj="10"]').click());await page.evaluate(()=>window.__finishOCR());await page.waitForTimeout(100);
