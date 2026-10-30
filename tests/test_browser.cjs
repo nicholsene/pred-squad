@@ -222,10 +222,7 @@ try{
  // Headless fake camera verifies framing and track cleanup, without recording a real camera.
  await page.evaluate(()=>{window.__cameraStreams=[];const get=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async opts=>{const stream=await get(opts);window.__cameraStreams.push(stream);return stream;};});
  await page.locator('.mf-actions [data-scan]').click();await page.locator('.camera-dialog[open]').waitFor();await page.locator('.camera-dialog.camera-needs-rotation').waitFor();assert(await page.locator('.camera-dialog').evaluate(n=>n.classList.contains('camera-needs-rotation')),'portrait capture requests landscape');await page.setViewportSize({width:844,height:390});await page.locator('#camera-capture:not([disabled])').waitFor();
- await page.locator('#camera-mode').selectOption('scoreboard');
- assert.equal(await page.locator('.camera-row').count(),10);
- await page.locator('#camera-mode').selectOption('hud');assert.equal(await page.locator('.camera-hud-map').count(),1);
- await page.locator('#camera-mode').selectOption('minimap');assert.equal(await page.locator('.camera-map-diamond').count(),1);
+ assert.equal(await page.locator('.camera-guide').count(),1);assert.equal(await page.locator('.camera-guide > *').count(),0);assert.equal(await page.locator('.camera-dialog select').count(),0);
  await page.locator('#camera-cancel').click();await page.setViewportSize({width:390,height:844});
  assert(await page.evaluate(()=>window.__cameraStreams.every(s=>s.getTracks().every(t=>t.readyState==='ended'))));
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
