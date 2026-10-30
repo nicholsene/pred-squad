@@ -7,10 +7,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   const browser=await pw[engine].launch({headless:true,...(engine==='chromium'&&process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})});
   try{
    const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
-   await page.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{get:()=>localStorage.getItem('__testOffline')!=='true'});});
+   await page.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{get:()=>localStorage.getItem('__testOffline')!=='true'});window.__nativeGetAll=IDBObjectStore.prototype.getAll;IDBObjectStore.prototype.getAll=function(){throw Error('Bulk photo reads are forbidden');};});
    const open=async()=>{await page.goto('http://127.0.0.1:'+server.address().port+'/');await page.evaluate(()=>{
     window.__calls=[];window.__mode='ok';
-    window.__rows=()=>new Promise((resolve,reject)=>{const q=indexedDB.open('squad-scan-archive-v1',1);q.onsuccess=()=>{const d=q.result,r=d.transaction('captures').objectStore('captures').getAll();r.onsuccess=()=>{d.close();resolve(r.result);};r.onerror=()=>reject(r.error);};q.onerror=()=>reject(q.error);});
+    window.__rows=()=>new Promise((resolve,reject)=>{const q=indexedDB.open('squad-scan-archive-v1',1);q.onsuccess=()=>{const d=q.result,r=__nativeGetAll.call(d.transaction('captures').objectStore('captures'));r.onsuccess=()=>{d.close();resolve(r.result);};r.onerror=()=>reject(r.error);};q.onerror=()=>reject(q.error);});
     window.fetch=async(url,options)=>{
      if(url!=='https://archive.invalid/functions/v1/scan-collector')throw Error('Unexpected network request: '+url);
      const body=options.body;let call;
@@ -19,6 +19,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
      __calls.push(call);
      if(__mode==='fail')return new Response(JSON.stringify({error:'simulated upload failure'}),{status:503});
      if(__mode==='holdObserve'&&call.kind==='observe'){__mode='ok';await new Promise(r=>window.__releaseRequest=r);}
+     if(__mode==='holdPhoto'&&call.kind==='photo'){__mode='ok';await new Promise(r=>window.__releasePhoto=r);}
      return new Response(JSON.stringify({ok:true}),{status:200});
     };
     window.archive=ScanArchive.create({url:'https://archive.invalid',key:'test-public-key'});
@@ -44,7 +45,17 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
    const revisions=await page.evaluate(id=>__calls.filter(c=>c.id===id&&c.kind==='observe'),race);assert.equal(revisions.length,2,'update during in-flight upload is sent automatically');assert.equal(revisions.at(-1).observations.outcome,'accepted');assert.equal(revisions.at(-1).observations.repaired,true);assert(revisions.at(-1).revision>revisions[0].revision);
 
    await page.evaluate(()=>archive.hold());const paused=await capture();await wait(paused,'queued');const before=await page.evaluate(()=>__calls.length);await page.evaluate(()=>{archive.setEnabled(false);archive.release();});await page.waitForTimeout(400);assert.equal(await page.evaluate(()=>__calls.length),before,'pause prevents queued uploads');assert.equal(await capture(),null,'pause also stops collecting new photos');
-   await page.evaluate(()=>archive.setEnabled(true));await wait(paused,'saved');assert.deepEqual(errors,[]);await page.evaluate(()=>archive.destroy());await page.close();console.log('ok:',engine,'durable private outbox, original canvas, offline reload, retry, in-flight revisions and pause');
+   await page.evaluate(()=>archive.setEnabled(true));await wait(paused,'saved');
+   // A fresh scan takes priority even when an older photo request is completing.
+   await page.evaluate(()=>{archive.hold();__mode='holdPhoto';});const interrupted=await capture();await page.evaluate(()=>archive.release());await page.waitForFunction(()=>typeof __releasePhoto==='function');
+   await page.evaluate(()=>archive.hold());await page.evaluate(()=>__releasePhoto());await page.waitForTimeout(500);
+   assert.equal(await page.evaluate(id=>__calls.filter(c=>c.id===id&&c.kind==='observe').length,interrupted),0,'new OCR hold blocks observation upload after photo acknowledgement');
+   await page.evaluate(()=>archive.release());await wait(interrupted,'saved');
+   // Drain a backlog without copying all queued image bytes into a single array.
+   await page.evaluate(()=>archive.hold());const batch=[];for(let i=0;i<8;i++)batch.push(await capture({batch:i}));for(const id of batch)await wait(id,'queued');
+   await page.evaluate(()=>archive.release());for(const id of batch)await wait(id,'saved');
+   for(const id of batch)assert.equal(await page.evaluate(id=>__calls.filter(c=>c.id===id&&c.kind==='photo').length,id),1);
+   assert.deepEqual(errors,[]);await page.evaluate(()=>archive.destroy());await page.close();console.log('ok:',engine,'no bulk image reads, backlog drain, new-scan priority, durable originals, offline reload, retries, raced revisions and pause');
   }finally{await browser.close();}
  }}finally{await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

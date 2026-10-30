@@ -13,6 +13,12 @@
     if (!s?.stage && v.clock.startedAt) v.stage = "live";
     return v;
   }
+  function resultOf(s){return [...(s.events||[])].reverse().find(e=>e.type==='match-result'&&e.sessionId===s.id&&['win','loss'].includes(e.outcome))||null;}
+  function finish(s,outcome,who,at=Date.now()){
+    if(!['win','loss'].includes(outcome))throw Error('Choose win or loss.');
+    if(!['live','finished'].includes(s.stage)&&s.board?.sessionId!==s.id)throw Error('Start or scan a match before finishing it.');
+    return {...clone(s),stage:'finished',finishedAt:s.stage==='finished'&&Number.isFinite(s.finishedAt)?s.finishedAt:at,events:[...(s.events||[]),{type:'match-result',sessionId:s.id,outcome,who:who||'',at,source:'manual'}]};
+  }
   function validateSetup(setup) {
     const issues = [], members = new Set();
     for (const side of ["ours", "theirs"]) {
@@ -105,7 +111,7 @@
     }
     return board;
   }
-  const api = { ROLES, clone, blank, normalize, validateSetup, fromPlan, observedGameTime, chooseLane, start, parseTime, objectiveStatus, objectiveEvent, validateBoard };
+  const api = { finish, resultOf, ROLES, clone, blank, normalize, validateSetup, fromPlan, observedGameTime, chooseLane, start, parseTime, objectiveStatus, objectiveEvent, validateBoard };
   root.SquadSession = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

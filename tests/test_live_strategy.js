@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),E=require('../docs/engine.js');
+const a={lvl:12,cs:140,gold:9000,k:5,d:1,a:6},b={lvl:10,cs:110,gold:7000,k:2,d:4,a:2};
+assert(E.laneLead(a,b).score>0);assert.equal(E.laneLead(a,b).score,-E.laneLead(b,a).score);
+assert.equal(E.laneLead({},{}).score,null);assert.equal(E.laneLead({currentGold:5000},{currentGold:0}).score,null);
+assert.equal(E.laneLead({lvl:18},{lvl:1}).score,35);assert.equal(E.laneLead({d:5},{d:0}).score,-10);
+assert.equal(E.laneLead({a:8},{a:0}).score,5);assert.equal(E.laneLead({a:8},{a:0},'SUPPORT').score,15);
+assert.equal(E.laneLead({lvl:0},{lvl:10}).coverage,0);
+assert.equal(E.laneLead(a,b).coverage,100);assert(E.laneLead({...a,lvl:13},b).score>E.laneLead(a,b).score);
+const setup={ours:{},theirs:{}},board={at:1000,ours:[],theirs:[]};E.ROLES.forEach((r,i)=>{setup.ours[r]={hero:'our'+i,who:i===0?'me':''};setup.theirs[r]={hero:'their'+i};board.ours.push({...a,hero:'our'+i});board.theirs.push({...b,hero:'their'+i});});
+const run=()=>E.liveStrategy(board,setup,'me',{now:1001});assert.equal(run().priority,'Use your level lead');assert.match(run().lane,/positions, health and cooldowns/);
+board.ours[0].lvl=9;assert.equal(run().priority,'Stay back and recover');delete board.ours[0].lvl;assert.match(run().reason,/unread/);assert.doesNotMatch(run().lane,/outlevel/);
+assert.equal(E.liveStrategy(board,setup,'me',{now:181001}).fresh,false);setup.ours.OFFLANE.hero='changed';assert.equal(run().fresh,false);
+console.log('ok: weighted evidence, missing measurements, role weights, stale guards and actionable strategy');

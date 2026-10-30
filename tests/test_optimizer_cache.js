@@ -18,3 +18,15 @@ invalidate(()=>app.allMatches=app.allMatches.slice());
 invalidate(()=>app.items=app.items.slice());
 invalidate(()=>state.id='two');
 console.log('ok: 100 unchanged refreshes avoid 500 profile builds; lineup, history, catalogue, cutoff, exclusion and session changes invalidate');
+
+let plans=0;
+window.CounterBuild={plan:()=>{plans++;return{};}};
+window.SquadOptimizer={optimize:()=>({status:'patch-review-required',solutions:[],warnings:[]})};
+const element={querySelectorAll:()=>[],querySelector:()=>({})};
+document.querySelector=s=>s==='#optimizer'?element:null;app.ctx={matches:[]};
+ui.render();assert.equal(plans,1);for(let i=0;i<100;i++)ui.render();assert.equal(plans,1);
+app.ctx.matches=app.ctx.matches.slice();ui.render();assert.equal(plans,2,'same-sized replacement planning history invalidates results');
+app.ctx.matches.push({id:'new-context'});ui.render();assert.equal(plans,3,'planning history growth invalidates results');
+app.heroes=app.heroes.slice();ui.render();assert.equal(plans,4,'replacement hero catalogue invalidates results');
+ui.render();assert.equal(plans,4);
+console.log('ok: changed planning inputs refresh advice without serializing whole match histories');

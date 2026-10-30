@@ -51,3 +51,7 @@ assert.equal(M.observedGameTime({sessionId:"current",at:1000,clock:80},"current"
 assert.equal(M.observedGameTime({sessionId:"old",at:1000,clock:80},"current",4000),null);
 assert.equal(M.observedGameTime({sessionId:"current",at:5000,clock:80},"current",4000),null);
 console.log("ok: observed game clock ages forward and rejects other-match/future observations");
+const ended=M.finish(live,'win','a',2000);assert.equal(M.resultOf(ended).outcome,'win');assert.equal(ended.finishedAt,2000);assert.equal(live.stage,'live');
+const edited=M.finish(ended,'loss','a',3000);assert.equal(M.resultOf(edited).outcome,'loss');assert.equal(edited.finishedAt,2000);assert.equal(edited.events.length,ended.events.length+1);
+assert.equal(M.resultOf(M.normalize(JSON.parse(JSON.stringify(edited)))).outcome,'loss');assert.throws(()=>M.finish(live,'draw','a'));assert.throws(()=>M.finish(M.blank(),'win','a'));assert.equal(M.resultOf({...ended,id:'another'}),null);
+console.log('ok: manual results persist, append edits and preserve finish time without crossing sessions');

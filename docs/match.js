@@ -648,6 +648,16 @@
       if(wake.supported && store.get("squad-wake",null)!==false)wake.enable();
     }catch(e){toast(e.message);}
   }
+  function finishMatch(){
+    matchFocus?.closeDetails();
+    if(document.querySelector('#match-result-dialog'))return;
+    const sessionId=S.id,dialog=document.createElement('dialog');dialog.id='match-result-dialog';dialog.setAttribute('aria-label','Match result');
+    dialog.innerHTML='<h2>How did the match end?</h2><p>Save your result for this match.</p><button type="button" class="chip cta" data-outcome="win">Win</button> <button type="button" class="chip" data-outcome="loss">Loss</button><p><button type="button" data-cancel>Cancel</button></p>';
+    dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+    dialog.onclick=e=>{const b=e.target.closest('button');if(!b)return;if(b.hasAttribute('data-cancel'))return dialog.close();if(!b.dataset.outcome)return;if(S.id!==sessionId){dialog.close();return toast('Match changed. Choose the result for the current match.');}
+      try{const next=M.finish(S,b.dataset.outcome,me);cancelPhoto('',true);dialog.close();commit(['stage','finishedAt','events'].map(k=>({path:[k],value:next[k]})));toast('Match result saved.');}catch(error){toast(error.message);}
+    };document.body.append(dialog);dialog.showModal();
+  }
   function renderLifecycle() {
     const issues=M.validateSetup(S.setup),el=$("#lifecycle"),pregame=S.stage!=="live"&&S.stage!=="finished";
     if(draftGameSession!==S.id){draftGameSession=S.id;draftGameTime=null;}
@@ -671,7 +681,7 @@
     const manual=$("#prep-manual");if(manual)manual.onclick=()=>planningUI.open(me);
     const start=$("#clock-start");if(start)start.onclick=startMatch;
     const undo=$("#undo-scan");if(undo)undo.onclick=()=>{const old=previousScan;if(Object.entries(old.after).some(([k,value])=>JSON.stringify(S[k])!==JSON.stringify(value)))return toast("Match changed since this scan. Correct the current values instead of undoing newer edits.");previousScan=null;commit(Object.entries(old.before).map(([k,value])=>({path:[k],value})),true);};
-    const finish=$("#match-finish");if(finish)finish.onclick=()=>commit([{path:["stage"],value:"finished"},{path:["finishedAt"],value:Date.now()}]);
+    const finish=$("#match-finish");if(finish)finish.onclick=finishMatch;
   }
   const OBJECTIVES=[{key:"fangtooth",label:"Fangtooth"},{key:"orb",label:"Orb Prime"},{key:"shaper",label:"Shaper"}];
   function nextObjective(now) {
@@ -891,7 +901,7 @@
       if(!confirm("Clear this match for everyone in the room?"))return;
       cancelPhoto("",true);scanAnnouncements.clear();lastBoardRead=null;previousScan=null;$("#scan-review").hidden=true;$("#map-review").hidden=true;hideScanProgress();replaceState(blank());toast("Match cleared");
     };
-    matchFocus=window.SquadMatchFocus.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast,externalTicker:true,onScan:()=>$("#camera-open").click()});window.__matchFocus=matchFocus;
+    matchFocus=window.SquadMatchFocus.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast,externalTicker:true,onFinish:finishMatch,onScan:()=>$("#camera-open").click()});window.__matchFocus=matchFocus;
     renderWake(); renderRoom(); render();
     const q = new URLSearchParams(location.search).get("room") || store.get("squad-room", null);
     if (q && !window.SquadHandoff?.pending) joinRoom(q, false);
@@ -901,7 +911,7 @@
       const strategyDue=!!S.clock?.startedAt&&Math.floor(clockSec())%15===0;
       if(S.board&&!strategyDue&&Math.floor(Date.now()/1000)%15===0)renderCounterBuild();
       if(S.clock?.startedAt){renderLive();renderObjectives();if(strategyDue){renderStrategy();renderBoard();}}
-      matchFocus?.render();
+      matchFocus?.tick();
     },1000);
     document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") { render(); refreshRoom().then(flush); } });
     document.addEventListener("squad:plan", consumePlan);

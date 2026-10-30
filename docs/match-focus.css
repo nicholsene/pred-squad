@@ -199,3 +199,13 @@ body.match-focus #scan-progress.photo-scan-progress{display:grid!important;grid-
 .photo-scan-message{display:block;font-size:12px;line-height:1.3}
 .photo-scan-progress>div{min-width:0}.photo-scan-progress .bar-meter{margin-top:6px}
 .photo-scan-progress>button{min-width:60px;min-height:44px;margin:0}
+
+/* Tactical calls remain visible independently of item recognition. */
+#match-focus .mf-pane[data-pane=strategy]{display:flex;flex-direction:column;overflow-y:auto;gap:8px;padding-bottom:8px}
+#match-focus .mf-pane[data-pane=strategy]>section{flex:0 0 auto}
+.mf-tactics{padding:12px;background:var(--paper,var(--glass-strong));border:1px solid var(--accent);border-radius:17px}
+.mf-tactics h2{font-size:21px;margin:5px 0 12px;line-height:1.15}
+.mf-tactics b{font-size:12px}.mf-tactics p{font-size:13px;line-height:1.4;margin:4px 0 12px}.mf-tactics small{color:var(--muted);font-size:11px}
+#match-focus .mf-lanes{min-height:270px}.mf-lanes details{font-size:10px;color:var(--muted)}
+#match-focus .mf-actions{grid-template-columns:minmax(0,1fr) 90px 78px}
+@media(max-height:500px) and (min-width:620px){#match-focus .mf-top{padding-right:288px}#match-focus .mf-actions{width:280px;grid-template-columns:1fr 90px 78px}}
