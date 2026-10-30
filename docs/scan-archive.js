@@ -1,0 +1,61 @@
+/* Private, durable photo outbox. No room state or reviewer credentials belong here. */
+(function(root){'use strict';
+function create({url,key,onStatus=()=>{}}){
+ const endpoint=url+'/functions/v1/scan-collector',DB='squad-scan-archive-v1',S='captures';
+ let enabled=true;try{enabled=localStorage.getItem('squad-save-scans')!=='off';}catch{}
+ let opening,busy=false,destroyed=false,holds=0,timer=null,lastError='',saved=0,waiting=0;
+ const pending=new Map(),unsaved=new Map();
+ const notify=()=>onStatus({enabled,saved,waiting:waiting+unsaved.size,error:unsaved.size?unsaved.size+' photo(s) could not be saved on this device. Keep this page open and retry.':lastError});
+ function db(){return opening||=(new Promise((resolve,reject)=>{const req=indexedDB.open(DB,1);req.onupgradeneeded=()=>req.result.createObjectStore(S,{keyPath:'id'});req.onerror=()=>reject(req.error);req.onsuccess=()=>resolve(req.result);}));}
+ async function all(){const d=await db();return new Promise((resolve,reject)=>{const q=d.transaction(S).objectStore(S).getAll();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
+ async function edit(id,change){const d=await db();return new Promise((resolve,reject)=>{const tx=d.transaction(S,'readwrite'),s=tx.objectStore(S),q=s.get(id);let value;q.onsuccess=()=>{value=change(q.result);if(value)s.put(value);};tx.oncomplete=()=>resolve(value);tx.onerror=tx.onabort=()=>reject(tx.error||Error('Photo storage failed'));});}
+ async function count(){try{const rows=await all();saved=rows.filter(r=>r.uploaded).length;waiting=rows.filter(r=>r.photo||r.revision>r.ackedRevision).length;notify();}catch(e){error(e);}}
+ function error(e){lastError='Photo saving needs attention: '+(e?.message||'device storage unavailable');notify();}
+ function identity(){
+  let i;try{i=JSON.parse(localStorage.getItem('squad-scan-device'));}catch{}
+  if(!i?.id||!i?.secret){i={id:crypto.randomUUID(),secret:Array.from(crypto.getRandomValues(new Uint8Array(32)),n=>n.toString(16).padStart(2,'0')).join('')};localStorage.setItem('squad-scan-device',JSON.stringify(i));}
+  return i;
+ }
+ async function request(body){
+  const i=identity(),r=await fetch(endpoint,{method:'POST',headers:{Authorization:'Bearer '+key,apikey:key,'x-scan-device':i.id,'x-scan-key':i.secret,...(body instanceof FormData?{}:{'Content-Type':'application/json'})},body:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(90000)});
+  const data=await r.json();if(!r.ok)throw Error(data.error||'upload failed');return data;
+ }
+ function schedule(delay=250){if(destroyed)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void pump();},delay);}
+ async function pump(){
+  if(destroyed||busy||holds||!enabled||navigator.onLine===false)return;
+  busy=true;let retry=false;
+  try{
+   for(const row of await all()){
+    if(holds||!enabled)break;
+    if(!row.photo&&row.revision<=row.ackedRevision)continue;
+    if(row.photo){
+     const form=new FormData();form.set('id',row.id);form.set('metadata',JSON.stringify(row.metadata));form.set('photo',new Blob([row.photo.bytes],{type:row.photo.type}),'capture');
+     await request(form);await edit(row.id,r=>({...r,photo:null,uploaded:true}));
+    }
+    // Re-read: OCR or cancellation may have updated this record during upload.
+    const latest=(await all()).find(r=>r.id===row.id);if(!latest)continue;
+    if(latest.revision>latest.ackedRevision){await request({action:'observe',id:row.id,revision:latest.revision,observations:latest.observations});await edit(row.id,r=>({...r,ackedRevision:latest.revision}));}
+   }
+   lastError='';
+  }catch(e){error(e);retry=true;}
+  finally{busy=false;await count();if(enabled&&!holds&&waiting)schedule(retry?30000:500);}
+ }
+ function capture(source,metadata={}){
+  if(!enabled)return null;
+  const id=crypto.randomUUID();
+  // Start canvas encoding now: callers may release their canvas after OCR.
+  const photo=source instanceof Blob?Promise.resolve(source):new Promise((resolve,reject)=>{let owned;try{owned=document.createElement('canvas');owned.width=source.width;owned.height=source.height;owned.getContext('2d').drawImage(source,0,0);owned.toBlob(b=>{owned.width=owned.height=0;b?resolve(b):reject(Error('Could not save camera photo'));},'image/jpeg',.95);}catch(e){if(owned)owned.width=owned.height=0;reject(e);}});
+  const task=photo.then(async blob=>{const record={id,photo:{bytes:await blob.arrayBuffer(),type:blob.type},metadata:{...metadata,selectedAt:Date.now()},observations:{outcome:'captured'},revision:1,ackedRevision:0,uploaded:false};unsaved.set(id,record);await edit(id,()=>record);unsaved.delete(id);lastError='';void count();schedule();}).catch(e=>{if(!unsaved.has(id))unsaved.set(id,null);error(e);});
+  pending.set(id,task);task.finally(()=>pending.delete(id));return id;
+ }
+ function update(id,patch){
+  if(!id)return Promise.resolve();
+  return (pending.get(id)||Promise.resolve()).then(()=>{if(unsaved.get(id)){const r=unsaved.get(id);r.revision++;r.observations={...r.observations,...JSON.parse(JSON.stringify(patch))};return;}return edit(id,r=>r?{...r,revision:r.revision+1,observations:{...r.observations,...JSON.parse(JSON.stringify(patch))}}:null);}).then(()=>{schedule();}).catch(error);
+ }
+ const online=()=>schedule(0);root.addEventListener('online',online);
+ void count();schedule(1000);
+ return{capture,update,hold:()=>{holds++;},release:()=>{holds=Math.max(0,holds-1);schedule();},retry:async()=>{for(const[id,r]of unsaved)if(r)try{await edit(id,()=>r);unsaved.delete(id);}catch(e){error(e);}await count();schedule(0);},status:()=>({enabled,saved,waiting:waiting+unsaved.size,error:unsaved.size?'Photo not saved on device; keep this page open and retry. '+lastError:lastError}),setEnabled:value=>{enabled=!!value;try{localStorage.setItem('squad-save-scans',enabled?'on':'off');}catch{}notify();if(enabled)schedule();},destroy:()=>{destroyed=true;clearTimeout(timer);root.removeEventListener('online',online);}};
+}
+root.ScanArchive={create};
+})(window);
+

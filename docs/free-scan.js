@@ -8,7 +8,7 @@
  function lines(read){return(read?.items||[]).flatMap(it=>{const b=box(it.poly);return b&&b.w>0&&b.h>0&&typeof it.text==='string'?[{...b,text:it.text.trim(),score:finite(it.score)?clamp(it.score):0,poly:it.poly,sourcePoly:it.sourcePoly}]:[];});}
  function distance(a,b){let p=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const n=[i];for(let j=1;j<=b.length;j++)n[j]=Math.min(n[j-1]+1,p[j]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=n;}return p[b.length];}
  function dictionary(heroes){return(heroes||[]).flatMap(h=>[...new Set([key(h.name),key(h.slug)])].filter(Boolean).map(k=>({hero:h.slug,key:k})));}
- function matchHero(text,dict){text=String(text||'').replace(/^(?:ADEPT|MASTER|PROFICIENT)\s+/i,'');const t=key(text),exact=[...new Set(dict.filter(d=>t===d.key||t.startsWith(d.key)&&/^[0-9O]{1,6}G$/.test(t.slice(d.key.length))).map(d=>d.hero))];if(exact.length===1)return{hero:exact[0],match:1,exact:true};const candidates=new Map();for(const d of dict){if(d.key.length<5||t.length<4)continue;const s=1-distance(t,d.key)/Math.max(t.length,d.key.length);if(s>=.75)candidates.set(d.hero,Math.max(candidates.get(d.hero)||0,s));}const ranked=[...candidates].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));return ranked.length?{hero:ranked[0][0],match:ranked[0][1],exact:false,ambiguous:ranked.length>1&&ranked[0][1]-ranked[1][1]<.05}:null;}
+ function matchHero(text,dict){text=String(text||'').replace(/^(?:ADEPT|MASTER|PROFICIENT|EXPERT)\s+/i,'');const t=key(text),exact=[...new Set(dict.filter(d=>t===d.key||t.startsWith(d.key)&&/^[0-9O]{1,6}G$/.test(t.slice(d.key.length))).map(d=>d.hero))];if(exact.length===1)return{hero:exact[0],match:1,exact:true};const candidates=new Map();for(const d of dict){if(d.key.length<5||t.length<4)continue;const s=1-distance(t,d.key)/Math.max(t.length,d.key.length);if(s>=.75)candidates.set(d.hero,Math.max(candidates.get(d.hero)||0,s));}const ranked=[...candidates].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));return ranked.length?{hero:ranked[0][0],match:ranked[0][1],exact:false,ambiguous:ranked.length>1&&ranked[0][1]-ranked[1][1]<.05}:null;}
  function groups(actual){const out=actual.map(l=>({parts:[l],text:l.text,...l}));for(const a of actual){let parts=[a],last=a;for(let i=0;i<2;i++){const next=actual.filter(b=>!parts.includes(b)&&b.x>=last.x+last.w-1&&b.x-last.x-last.w<=Math.max(a.h,b.h)*.8&&Math.abs(b.y+b.h/2-a.y-a.h/2)<=Math.max(a.h,b.h)*.35).sort((x,y)=>x.x-y.x)[0];if(!next)break;parts=[...parts,next];last=next;const x=Math.min(...parts.map(p=>p.x)),y=Math.min(...parts.map(p=>p.y));out.push({parts,text:parts.map(p=>p.text).join(''),score:Math.min(...parts.map(p=>p.score)),x,y,w:Math.max(...parts.map(p=>p.x+p.w))-x,h:Math.max(...parts.map(p=>p.y+p.h))-y});}}return out;}
  function heroHits(actual,dict){return groups(actual).flatMap(g=>{const m=matchHero(g.text,dict);return m?[{...g,...m,cy:g.y+g.h/2,cx:g.x+g.w/2}]:[];});}
  const strength=h=>Math.min(h.score,h.match);
@@ -51,5 +51,29 @@
  const oursIndex=tagHits[0].team,teams=[{},{}];for(let team=0;team<2;team++)for(let i=0;i<5;i++){const h=bands[team][i],row={role:order[i],hero:h.hero,readConfidence:{hero:heroEvidence(h)}},t=tagHits.find(t=>t.team===team&&t.row===i);if(t){row.who=t.who;row.readConfidence.who=ev(t.who,'paddle-gamertag',t.score,1,true,{observedText:t.text});}teams[team][order[i]]=row;}
  return{sourceLayout:'loading',ours:teams[oursIndex],theirs:teams[1-oursIndex],oursRow:oursIndex?'bottom':'top',found:10,issues:[],readConfidence:{layout:ev('role-order','paddle-card-grid',Math.min(...hs.map(h=>h.score),...roles.map(l=>l.score)),clamp(1-residual),true),ownTeam:ev(oursIndex?'bottom':'top','paddle-gamertag',Math.min(...tagHits.map(t=>t.score)),1,true)}};
  }
- return{prepareBoard,applyCells,loading};
+ function loadingCells(read,{heroes=[]}={}){
+ const actual=lines(read),W=read?.image?.width,H=read?.image?.height;if(!finite(W)||!finite(H)||W<=0||H<=0)return[];
+ const roles=actual.filter(l=>ROLES.includes(key(l.text))&&l.score>=.9).sort((a,b)=>a.x-b.x);
+ if(roles.length!==5||new Set(roles.map(l=>key(l.text))).size!==5)return[];
+ const centers=roles.map(l=>l.x+l.w/2),step=(centers[4]-centers[0])/4;if(step<W*.045||step>W*.22||centers.some((x,i)=>Math.abs(x-centers[0]-i*step)>step*.12))return[];
+ const roleY=roles.reduce((s,l)=>s+l.y+l.h/2,0)/5;if(roles.some(l=>Math.abs(l.y+l.h/2-roleY)>H*.05))return[];
+ const hits=heroHits(actual,dictionary(heroes)).filter(h=>h.exact&&h.score>=.9&&!h.ambiguous),cells=[];
+ for(const[side,above]of[['ours',true],['theirs',false]]){
+  const byColumn=new Map();
+  for(const h of hits.filter(h=>above?h.cy<roleY-H*.045:h.cy>roleY+H*.045).sort((a,b)=>strength(b)-strength(a))){
+   let col=0;for(let i=1;i<5;i++)if(Math.abs(h.cx-centers[i])<Math.abs(h.cx-centers[col]))col=i;
+   if(Math.abs(h.cx-centers[col])>step*.48)continue;const old=byColumn.get(col);if(old&&old.hero!==h.hero)return[];if(!old)byColumn.set(col,h);
+  }
+  if(byColumn.size<3)return[];
+  const entries=[...byColumn],n=entries.length,sx=entries.reduce((s,[i])=>s+i,0),sy=entries.reduce((s,[,h])=>s+h.cy,0),sxx=entries.reduce((s,[i])=>s+i*i,0),sxy=entries.reduce((s,[i,h])=>s+i*h.cy,0),dy=(n*sxy-sx*sy)/(n*sxx-sx*sx),y0=(sy-dy*sx)/n;
+  if(entries.some(([i,h])=>Math.abs(h.cy-y0-i*dy)>H*.04))return[];
+  const heights=entries.map(([,h])=>h.h).sort((a,b)=>a-b),u=heights[Math.floor(heights.length/2)];if(!(u>0&&u<H*.05))return[];
+  for(let i=0;i<5;i++)for(const[field,y,h]of[['hero',y0+i*dy-1.15*u,2.3*u],['name',y0+i*dy+.45*u,3*u]]){
+   const c=cell('loading:'+side+':'+i+':'+field,side,i,field,centers[i]-.53*step,y,1.06*step,h,W,H);if(c.w<=0||c.h<=0)return[];cells.push(c);
+  }
+ }
+ return cells;
+ }
+
+ return{prepareBoard,applyCells,loading,loadingCells};
 });

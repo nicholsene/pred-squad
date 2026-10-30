@@ -10,7 +10,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  page.on("pageerror",e=>errors.push(e.message));
  await page.addInitScript(()=>{window.__said=[];window.SpeechSynthesisUtterance=function(text){this.text=text;};Object.defineProperty(window,"speechSynthesis",{configurable:true,value:{cancel(){},getVoices(){return[];},speak(u){window.__said.push(u.text);u.onend?.();}}});window.__revokedPhotoURLs=[];const revoke=URL.revokeObjectURL.bind(URL);URL.revokeObjectURL=url=>{window.__revokedPhotoURLs.push(url);revoke(url);};});
  const url="http://127.0.0.1:"+server.address().port+"/";
- await page.goto(url);await page.waitForFunction(()=>window.__app&&window.SquadSession);
+ await page.addInitScript(()=>localStorage.setItem('squad-save-scans','off'));await page.goto(url);await page.waitForFunction(()=>window.__app&&window.SquadSession);
  const fixture=await page.evaluate(()=>{
    const S=SquadSession.blank(),roles=SquadEngine.ROLES,heroes=__app.heroes.slice(0,10).map(h=>h.slug),who=__app.squad.players[0].key;
    S.stage="live";S.clock={startedAt:Date.now()-600000};
@@ -111,7 +111,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||"playwright");
  page.once("dialog",d=>d.accept());await page.evaluate(()=>document.querySelector("#match-clear").click());
  await page.evaluate(()=>window.__finishOCR());await page.waitForTimeout(100);
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem("squad-match")).board),null);
- await page.evaluate(()=>window.__matchFocus.readUpdate());assert.match(await page.evaluate(()=>window.__said.at(-1)),/Scan the scoreboard/);
+ await page.evaluate(()=>window.__matchFocus.readUpdate());assert.match(await page.evaluate(()=>window.__said.at(-1)),/new scoreboard photo/);
  await page.evaluate(()=>window.__matchFocus.scanFeedback("Take another photo."));assert.equal(await page.locator(".mf-draft-notice").isVisible(),true);
  // A weak loading photo must request a retake without opening a manual lineup form.
  await page.evaluate(({S,who})=>{localStorage.setItem("squad-match",JSON.stringify({...S,clock:{startedAt:Date.now()-600000}}));localStorage.setItem("squad-me",JSON.stringify(who));},fixture);

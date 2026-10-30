@@ -330,7 +330,9 @@
     }
     if (weakest && weakest.verdict === "Tough") calls.push(`${ROLE_LABEL[weakest.role]} is our weakest lane — jungler, gank or cover it before 6:00; laner, farm safe under tower.`);
     if (strongest && strongest.verdict === "Favored") calls.push(`${ROLE_LABEL[strongest.role]} is our strongest lane — gank there to snowball, then push its tower after every kill.`);
-    if (threats[0]) calls.push(`Biggest threat: ${nm(threats[0].hero)} (${ROLE_LABEL[threats[0].role]})${threats[0].fed ? " — marked ahead" : ""}. Track them on the minimap; if missing, assume they're coming.`);
+    const tracked=threats.find(t=>t.fed||Number.isFinite(t.metaWr)&&t.metaWr>50||t.vs.games>=3&&t.vs.wr<.5);
+    if(tracked)calls.push(`Threat to track: ${nm(tracked.hero)} (${ROLE_LABEL[tracked.role]})${tracked.fed?" — marked ahead":tracked.metaWr>50?" — patch results favor this pick":" — difficult in your recorded games"}. Watch for their rotations when missing.`);
+    else calls.push("Watch missing enemies before extending your lane; current evidence does not identify a leading threat.");
     calls.push("After a won fight, consider a safe objective or tower rather than chasing kills.");
 
     const now = clock == null ? null : clock;
@@ -339,15 +341,15 @@
     const members = {};
     for (const l of lanes) if (l.who) {
       const lv = (live && live[l.who]) || {};
-      const deaths = lv.deaths || 0, wards = lv.wards || 0;
+      const deaths = Number.isFinite(lv.deaths)?lv.deaths:null, wards=Number.isFinite(lv.wards)?lv.wards:null;
       const rules = [];
-      if (deaths >= T.maxDeaths) rules.push({ level: "bad", text: `At ${deaths} deaths — past the limit. Farm under tower, fight only next to the team.` });
-      else if (deaths >= T.maxDeaths - 1) rules.push({ level: "warn", text: `At ${deaths} deaths — behind-mode: no solo fights. Say "I'm at ${deaths}" on voice.` });
+      if (deaths != null && deaths >= T.maxDeaths) rules.push({ level: "bad", text: `At ${deaths} deaths — past the limit. Farm under tower, fight only next to the team.` });
+      else if (deaths != null && deaths >= T.maxDeaths - 1) rules.push({ level: "warn", text: `At ${deaths} deaths — behind-mode: no solo fights. Say "I'm at ${deaths}" on voice.` });
       if (now != null) {
         const want = Math.min(T.minWards + 2, Math.floor(now / 300));
-        if (wards < want) rules.push({ level: "warn", text: `Wards ${wards} — about ${want} by now. Place one on your next trip out of base.` });
+        if (wards != null && wards < want) rules.push({ level: "warn", text: `Wards ${wards} — about ${want} by now. Place one on your next trip out of base.` });
       }
-      if (now != null && now > 240 && !lv.obj) rules.push({ level: "info", text: "No objective damage yet — join the next Fangtooth when your wave is pushed." });
+      if (now != null && now > 240 && lv.obj === false) rules.push({ level: "info", text: "No objective damage yet — join the next Fangtooth when your wave is pushed." });
       members[l.who] = { role: l.role, hero: l.hero, opp: l.opp, rules };
     }
 

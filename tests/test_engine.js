@@ -135,3 +135,15 @@ console.log("ok: regression scoring, draft locks and distinct heroes");
  assert.strictEqual(E.boardState(b,{}).us.kills,null,'an unread kill count is not zero');
  assert.strictEqual(E.boardState(b,{}).us.gold,null,'live CS does not create a gold total');
 }
+
+{
+ const unknownSetup=JSON.parse(JSON.stringify(setup));for(const r of E.ROLES)delete unknownSetup.theirs[r].fed;
+ const unknown=E.matchPlan(E.context([],heroes,null),unknownSetup,{},1200,{});
+ assert(!Object.values(unknown.members).flatMap(m=>m.rules).some(r=>/Wards 0|No objective damage/.test(r.text)));
+ assert(!unknown.calls.some(c=>/Biggest threat|Threat to track/.test(c)));
+ const tracked=E.matchPlan(E.context([],heroes,null),setup,{stealinNICKELS:{wards:0,obj:false,deaths:4}},1200,{});
+ assert(tracked.members.stealinNICKELS.rules.some(r=>/Wards 0/.test(r.text)));
+ assert(tracked.members.stealinNICKELS.rules.some(r=>/No objective damage/.test(r.text)));
+ assert(tracked.calls.some(c=>/Threat to track: Khaimera/.test(c)));
+}
+console.log('ok: unknown tracking stays unknown; observed zero reminders and supported threat tracking remain');

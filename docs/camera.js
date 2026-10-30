@@ -18,7 +18,7 @@ async function open(initial,onCapture,onError=()=>{}){
   frame={x:(x-ox)/scale,y:(y-oy)/scale,w:w/scale,h:h/scale};
   capture.disabled=!landscape||video.readyState<2;const kind=mode.value;
   guide.replaceChildren();
-  dialog.querySelector('#camera-tip').textContent='Line up the full screen';
+  dialog.querySelector('#camera-tip').textContent='Line up the full screen'+(root.__scanArchive?.status().enabled?' · Photos saved privately':'');
   status.textContent=landscape?'Camera ready. Hold steady and capture.':'Rotate sideways for a horizontal game-screen photo.';
  };
  dialog.querySelector('#camera-upload').onclick=()=>{close();onCapture('upload',null);};mode.onchange=layout;dialog.querySelector('#camera-cancel').onclick=close;dialog.oncancel=e=>{e.preventDefault();close();};

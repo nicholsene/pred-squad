@@ -59,3 +59,12 @@ console.log('ok: independent joint oracle, scenario normalization, no redundant 
 f=fixture(2,['healing']);const coordinated=CB.plan({items:f.catalog,setup:f.setup,board:f.board,now:N,coordinated:true,sessionId:'s'});
 a(coordinated.players.every(p=>p.needs.some(n=>n.key==='healing')));
 console.log('ok: coordinated pool considers all eligible utility buyers');
+
+{
+ const B=require('../docs/buildplans.js'),f=fixture(1,[]);
+ f.board.ours[0].items=['A0'];
+ f.buildPlans={P0:B.createBaseline({who:'P0',hero:'h0',role:R[0],patch:'p',sessionId:'s',items:['A0','A1','A2','A3','A4','A5'],nextItem:'A0',confirmed:true,now:N,catalog:f.catalog})};
+ a.equal(run(f).assignment[0].keepTarget,null,'owned planned target is not recommended as next purchase');
+ f.board.ours[0].items=[];a.equal(run(f).assignment[0].keepTarget,'A0','unowned reviewed target remains eligible');
+}
+console.log('ok: owned starting target is not repeated as a next-item direction');
