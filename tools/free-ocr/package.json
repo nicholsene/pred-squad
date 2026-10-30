@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "@paddleocr/paddleocr-js": "0.4.2",
+    "@techstark/opencv-js": "4.10.0-release.1",
+    "clipper-lib": "6.4.2",
+    "js-yaml": "4.1.1",
+    "onnxruntime-web": "1.24.3"
+  },
+  "name": "pred-squad-free-ocr-assets",
+  "private": true,
+  "scripts": {
+    "vendor": "python3 ../../scripts/vendor_free_ocr.py"
+  }
+}

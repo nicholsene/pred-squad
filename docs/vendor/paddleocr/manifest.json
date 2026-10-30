@@ -1,0 +1,37 @@
+{
+  "sdk": "@paddleocr/paddleocr-js@0.4.2",
+  "ort": "onnxruntime-web@1.24.3",
+  "model": "PP-OCRv6_tiny",
+  "assets": {
+    "worker.js.gz": {
+      "sha256": "e60ba8aed23c3444f22298c59abecaebb1f9afe58637f3ac016852e8dfd36d6e",
+      "rawSha256": "477db3f009c118823a5f9ebe15f1e96c1c464165715ba28a9884290f61addf52",
+      "bytes": 3569428,
+      "rawBytes": 11341486
+    },
+    "ort-wasm-simd-threaded.jsep.mjs": {
+      "sha256": "9a99acd12acc495184c9ea4d458ac9424f8180aacfbc7b8371ed64f9351e4a81",
+      "rawSha256": "9a99acd12acc495184c9ea4d458ac9424f8180aacfbc7b8371ed64f9351e4a81",
+      "bytes": 46595,
+      "rawBytes": 46595
+    },
+    "runtime.wasm.gz": {
+      "sha256": "002b611e241cf548e60726cecb4ae3937e53608471ea52a686c2645e54eb4a43",
+      "rawSha256": "2e0a3d0e3f6b7c13ecfaba38c13691fd19c9ed470e72f9d7d8416ca59ab6dbcd",
+      "bytes": 5760120,
+      "rawBytes": 25014754
+    },
+    "det.tar.gz": {
+      "sha256": "17ba54bd115b4fdd486cd91ca705d23a5cb97a6634e9f0926be53355f4716af6",
+      "rawSha256": "ff6ab415b0a6e0c488550f2fb5d5046f1719848df220b2dc21b56402a65bc05d",
+      "bytes": 1590367,
+      "rawBytes": 1792000
+    },
+    "rec.tar.gz": {
+      "sha256": "59807b9a1b84e5e687227188ff07bbb573a62e7f76b7cd3f36aaa7a923bc8797",
+      "rawSha256": "1e13b22717b1edd89d4cde4fda272b6c17d5b505c97c2baea99da1a3a2d54b29",
+      "bytes": 4126524,
+      "rawBytes": 4526080
+    }
+  }
+}

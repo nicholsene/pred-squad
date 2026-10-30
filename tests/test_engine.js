@@ -126,3 +126,12 @@ assert.deepStrictEqual(E.suggestLineups(ctx,[]),[]);
 const locked=E.suggestLineups(ctx,["DiMu","inFamoUs"],3,{locks:{DiMu:{role:"JUNGLE"}},excluded:["aurora"]});
 for(const l of locked){assert.equal(l.roles.DiMu,"JUNGLE");assert(!Object.values(l.chosenHeroes).includes("aurora"));assert.equal(new Set(Object.values(l.chosenHeroes)).size,2);}
 console.log("ok: regression scoring, draft locks and distinct heroes");
+
+{
+ const r=()=>({lvl:10,k:0,d:0,a:0,gold:null});
+ const b={ours:Array.from({length:5},r),theirs:Array.from({length:5},r)};
+ assert.strictEqual(E.boardState(b,{}).us.kills,0);
+ b.ours[0].k=null;
+ assert.strictEqual(E.boardState(b,{}).us.kills,null,'an unread kill count is not zero');
+ assert.strictEqual(E.boardState(b,{}).us.gold,null,'live CS does not create a gold total');
+}

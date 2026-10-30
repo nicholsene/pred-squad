@@ -359,7 +359,7 @@
      Returns team totals, per-lane gaps, who is snowballing, and plain calls. */
   function boardState(board, setup, T = {}, nameOf = x => x) {
     if (!board || !board.ours || !board.theirs) return null;
-    const sum = (rows, k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+    const sum = (rows, k) => rows.every(r => Number.isFinite(r[k])) ? rows.reduce((a, r) => a + r[k], 0) : null;
     const known = (rows, k) => rows.filter(r => r[k] != null);
     const avg = (rows, k) => { const x = known(rows, k); return x.length ? sum(x, k) / x.length : null; };
     const us = { gold: sum(board.ours, "gold"), kills: sum(board.ours, "k"), lvl: avg(board.ours, "lvl") };

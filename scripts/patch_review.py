@@ -27,6 +27,7 @@ def logic_fingerprint(root):
     """All code/data that can change optimizer prescriptions participates in review."""
     from pathlib import Path
     names=("docs/counterbuild.js","docs/buildplans.js","docs/optimizer.js","docs/profiles.js","docs/mechanics.js","config/item-mechanics.json","docs/optimizer-ui.js","docs/session.js","docs/match.js","docs/scan.js","docs/scoreboard.js","docs/photo-router.js","docs/scan-quality.js","docs/photo-time.js","docs/camera.js","docs/minimap.js","docs/match-focus.js","scripts/fetch.py","scripts/patch_review.py")
+    names += ("docs/engine.js","docs/free-ocr.js","docs/free-scan.js","docs/vendor/paddleocr/manifest.json")
     return digest({name:hashlib.sha256((Path(root)/name).read_bytes()).hexdigest() if (Path(root)/name).exists() else None for name in names})
 
 def snapshot(h,i,logic):

@@ -107,13 +107,14 @@ try{
  assert.match(await page.locator('#objectives').innerText(),/Respawns in/);await closeDetails();
  // Uncertain automatic results leave state unchanged; manual review remains opt-in.
  await page.evaluate(()=>{
-   window.PhotoRouter.detect=async()=>({kind:'scoreboard'});
+   window.PhotoRouter.classify=()=>({kind:'scoreboard'});
    window.ScanQuality.assess=()=>({auto:false,score:60,issues:['Review uncertain numbers']});
    const s=JSON.parse(localStorage.getItem('squad-match')),roles=SquadEngine.ROLES,heroes=__app.heroes.map(h=>h.slug);
    const oursUsed=new Set(),theirsUsed=new Set(['gideon']);
    const ours=roles.map(r=>{const proposed=s.setup.ours[r]?.hero,hero=proposed&&!oursUsed.has(proposed)?proposed:heroes.find(h=>!oursUsed.has(h));oursUsed.add(hero);return{hero,lvl:10,k:1,d:2,a:3,gold:5000};});
    const theirs=roles.map((r,i)=>{if(i===2)return{hero:'gideon',lvl:10,k:2,d:1,a:3,gold:6000};const proposed=s.setup.theirs[r]?.hero,hero=proposed&&!theirsUsed.has(proposed)?proposed:heroes.find(h=>!theirsUsed.has(h));theirsUsed.add(hero);return{hero,lvl:10,k:2,d:1,a:3,gold:6000};});
-   window.ScoreboardScan={scan:async()=>({ours,theirs,issues:['Check numbers']})};
+   window.FreeOCR={read:async()=>({lines:[],fixtureboard:{ours,theirs,issues:['Check numbers']}}),cancel(){}};
+   window.FreeScan={prepareBoard:read=>({result:read.fixtureboard,cells:[]})};
  });
  await page.locator('#board-file').setInputFiles({name:"board.png",mimeType:"image/png",buffer:Buffer.from(await page.evaluate(()=>{const c=document.createElement("canvas");c.width=c.height=4;return c.toDataURL("image/png").split(",")[1];}),"base64")});
  await page.waitForFunction(()=>document.querySelector('#mf-age')?.textContent.includes('Scoreboard unclear'));
