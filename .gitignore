@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .env
+.env.local
+tools/free-ocr/node_modules/
 tests/fixture_matches.json
 
 .test-deps/

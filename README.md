@@ -27,12 +27,12 @@ An enemy laner shifts the estimate by that matchup's meta win rate and by your o
 
 ## Live match (Match tab)
 
-- **Scan loading screen**: take a photo of the loading screen. It is read on the phone (Tesseract OCR, nothing uploaded) and fills in all ten heroes and lanes. Tap who's who if a gamertag wasn't read.
+- **Free photo scanning**: PaddleOCR runs on your phone. A photo appears immediately with progress and Cancel; clear loading-screen lineups and scoreboard values apply automatically. Unclear values stay unknown. No images are uploaded and no API key or paid credits are needed. The first scan downloads about 15 MB of reader files, then caches them on the device.
 - **Keep screen on**: uses the Screen Wake Lock API so the phone doesn't dim or lock while the page is open (iOS 16.4+, Android Chrome). It turns on automatically when you join a room.
 - **Live room**: *Start live match* gives a 5-letter code and a share link. Everyone who opens it sees the same lineup, clock and tracker; any player can change heroes, mark an enemy as fed, or log their deaths, wards and objective damage, and the strategy updates for everyone. Rooms are stored in a free Supabase project (`rooms` table, `patch_room` RPC, realtime) and are cleared after 3 days.
 - **Strategy**: per-lane favored/even/tough estimates, the biggest threats (fed first), jungle and push calls, objective timers, and each player's rules (behind-mode at 3 deaths, ward pace, objective reminder).
 
-- **Scan scoreboard** (Match tab): snap the in-game scoreboard when you're dead. It reads every player's level, K/D/A and gold (hero names too if the lineup isn't set), updates squad deaths, marks snowballing enemies as *Ahead*, and puts "right now" calls at the top of the strategy for everyone in the room. Digits are matched against templates of the game's font (`docs/sb-digits.json`), so it's quick and doesn't need a server. Tested on 6 end-of-match photos: 54/60 heroes, 56/60 levels, 170/180 K/D/A, 51/60 gold.
+- **Scan scoreboard** (Match tab): photograph the full scoreboard. The free reader locates both teams, enlarges player-stat crops, and updates reliable hero, level, K/D/A and farm/CS readings. It preserves unknown numbers and inventories; farm is never treated as earned gold. Photos and scan results are rejected if the match changes or you cancel. Optional manual review remains under Details.
 - **Build to answer them** (Match tab): from what the enemy heroes build in your stored matches (or their actual items), works out what they lean on (healing, shields, tankiness, physical/magic damage, crit, burst) and gives one of you the counter item, picking items your hero's players actually buy. Each call shows how teams facing that threat did with and without the answer.
 - **Item lab** (Stats tab): items each of you wins and loses more with, defensive items vs results, the counter matrix over every team in your matches, and stat value per gold for every item this patch.
 
@@ -75,3 +75,9 @@ python scripts/fetch.py      # live fetch (needs the secrets as env vars)
 - Game modes pulled: RANKED and STANDARD (Quick Match). Edit `gameModes` in `config/squad.json` to change.
 - Lane opponent = enemy in the same role. Carry and support also count each other's duo partner.
 - Button labels assume the default PS5 layout (R2 basic, L1 primary, L2 secondary, R1 alternate, L1+R1 ultimate).
+
+### Free OCR source and rebuild
+
+The reader uses the official [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) browser SDK 0.4.2, PP-OCRv6 tiny detection/recognition models, and ONNX Runtime Web 1.24.3. It is Apache-licensed with dependency notices in `docs/vendor/paddleocr/NOTICE.txt`. The SDK worker is unchanged; assets are gzip-compressed, SHA-256 checked, locally hosted, and cached. Recognition scores are evidence strengths, not calibrated correctness probabilities.
+
+To reproduce assets, run `npm ci --prefix tools/free-ocr --ignore-scripts`, then `python3 scripts/vendor_free_ocr.py`. The script verifies pinned upstream hashes before writing the browser assets. No private photos or credentials belong in the repository.

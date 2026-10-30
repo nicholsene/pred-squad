@@ -202,7 +202,7 @@
     return file._scanTicket ||= {sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
   }
   function currentScan(t){
-    return t&&S.id===t.sessionId&&(room?.code||null)===t.roomCode&&(room?.version??null)===t.version&&JSON.stringify(S.setup)===t.setup&&S.stage===t.stage&&JSON.stringify(S.clock)===t.clock&&me===t.who;
+    return t&&!t.cancelled&&S.id===t.sessionId&&(room?.code||null)===t.roomCode&&(room?.version??null)===t.version&&JSON.stringify(S.setup)===t.setup&&S.stage===t.stage&&JSON.stringify(S.clock)===t.clock&&me===t.who;
   }
   function requireScan(t){if(!currentScan(t))throw new Error("Match or room changed. Scan again for the current match.");}
   function scanEvidenceKey(state){return JSON.stringify([state.setup,state.board,state.objectives,state.buildPlans,state.pivotIntents,state.stage,state.clock]);}
@@ -213,7 +213,48 @@
     else matchFocus?.noticeScan(kind,crypto.randomUUID());
     return id;
   }
+  let activePhoto=null;
+  const photoAbort=()=>new DOMException("Photo scan cancelled.","AbortError");
+  function requirePhoto(job){if(activePhoto!==job||job.controller.signal.aborted)throw photoAbort();requireScan(job.ticket);}
+  function finishPhoto(job){
+    if(job.url){job.preview.removeAttribute("src");URL.revokeObjectURL(job.url);job.url=null;}
+    if(job.image){job.image.width=job.image.height=0;job.image=null;}
+    if(activePhoto!==job)return;
+    activePhoto=null;scanBusy=false;hideScanProgress();
+    const box=$("#scan-progress");box.classList.remove("photo-scan-progress");box.innerHTML='<div class="bar-meter"><i></i></div><span class="muted"></span>';
+  }
+  function cancelPhoto(message="Photo scan cancelled.",quiet=false){
+    const job=activePhoto;if(!job)return;job.ticket.cancelled=true;job.controller.abort();window.FreeOCR?.cancel();finishPhoto(job);if(!quiet)matchFocus?.scanFeedback(message);
+  }
+  function photoProgress(job,message,fraction){
+    if(activePhoto!==job||job.controller.signal.aborted)return;
+    if(!currentScan(job.ticket)){cancelPhoto("Match changed. Take a new photo for this match.");return;}
+    job.message.textContent=message;const n=Number(fraction);job.bar.style.width=(Number.isFinite(n)?Math.round(Math.max(0,Math.min(1,n))*100):0)+"%";
+  }
+  function beginPhoto(file){
+    if(scanBusy&&!activePhoto){toast("Wait for the current scan to finish.");return null;}cancelPhoto("",true);
+    const job={ticket:scanTicket(file),controller:new AbortController(),url:null,image:null};
+    const box=$("#scan-progress");box.innerHTML='<img class="photo-scan-preview" alt="Selected game photo"><div><span class="photo-scan-message" role="status">Opening photo…</span><div class="bar-meter"><i></i></div></div><button type="button" class="chip">Cancel</button>';
+    job.preview=box.querySelector("img");job.message=box.querySelector("span");job.bar=box.querySelector("i");
+    if(file instanceof Blob){job.url=URL.createObjectURL(file);job.preview.src=job.url;}
+    else{const c=document.createElement("canvas"),w=file.width||1,h=file.height||1,s=Math.min(96/w,72/h);c.width=Math.max(1,Math.round(w*s));c.height=Math.max(1,Math.round(h*s));c.getContext("2d").drawImage(file,0,0,c.width,c.height);job.preview.src=c.toDataURL("image/jpeg",.65);c.width=c.height=0;}
+    box.querySelector("button").onclick=()=>cancelPhoto();activePhoto=job;scanBusy=true;box.classList.add("photo-scan-progress");box.hidden=false;$("#board-progress").hidden=true;return job;
+  }
+  async function decodePhoto(file,job){
+    const signal=job.controller.signal;let source=file,bitmap=null,fallback=null;
+    const check=()=>{if(signal.aborted)throw photoAbort();};check();
+    try{
+      if(file instanceof Blob){
+        if(window.createImageBitmap){try{bitmap=await createImageBitmap(file,{imageOrientation:"from-image"});source=bitmap;}catch{check();}}
+        check();
+        if(!bitmap){fallback=await new Promise((resolve,reject)=>{const img=new Image(),timer=setTimeout(()=>stop(new Error("Could not open this photo. Try a JPEG or PNG.")),15000),clear=()=>{clearTimeout(timer);img.onload=img.onerror=null;signal.removeEventListener("abort",abort);},stop=error=>{clear();img.src="";reject(error);},abort=()=>stop(photoAbort());img.onload=()=>{clear();resolve(img);};img.onerror=()=>stop(new Error("Could not open this photo. Try a JPEG or PNG."));signal.addEventListener("abort",abort,{once:true});img.src=job.url;});source=fallback;}
+      }
+      check();const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;if(!(w>0&&h>0))throw new Error("Photo dimensions are invalid.");
+      const scale=Math.min(1,2048/w,2048/h),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));canvas.getContext("2d").drawImage(source,0,0,canvas.width,canvas.height);photoTime.copy(file,canvas);return canvas;
+    }finally{bitmap?.close();if(fallback)fallback.src="";}
+  }
   function scanProgress(id,message,fraction){
+    if(activePhoto){photoProgress(activePhoto,message,fraction);return;}
     const box=$(id);box.querySelectorAll("button").forEach(b=>b.remove());box.hidden=false;box.querySelector("span").textContent=message;
     box.querySelector("i").style.width=Math.round((fraction||0)*100)+"%";
   }
@@ -231,22 +272,23 @@
     for(const role of ROLES)if(identified.has(setup.ours[role]?.who)&&res.ours?.[role]?.who!==setup.ours[role].who)setup.ours[role].who="";
     return setup;
   }
-  async function runScan(file,{handsFree=false}={}){
+  async function runScan(file,{handsFree=false,ocr=null,signal,guard=()=>{}}={}){
     const ticket=scanTicket(file);
     try{
-      const res=await window.LoadingScan.scan(file,A.heroes,A.squad.players,(m,f)=>scanProgress("#scan-progress",m,f));
+      const res=ocr?(window.FreeScan.loading?.(ocr,{heroes:A.heroes,squad:A.squad.players})||{ours:{},theirs:{},issues:["Loading screen unclear."]}):await window.LoadingScan.scan(file,A.heroes,A.squad.players,(m,f)=>scanProgress("#scan-progress",m,f));
+      guard();
       requireScan(ticket);
       const setup=setupFromRead(res),quality=window.ScanQuality.assess("loading",res,{heroes:A.heroes,items:A.items,squad:A.squad.players});
       if(quality.auto&&!M.validateSetup(setup).length){
         previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
-        savedScan([{path:["setup"],value:setup}],ticket,"loading");hideScanProgress();toast("Lineup updated.");
+        guard();savedScan([{path:["setup"],value:setup}],ticket,"loading");hideScanProgress();toast("Lineup updated.");
       }else if(handsFree){
         scanFeedback("Lineup unclear. Fill the frame with the loading screen and take another photo.");
       }else{
         reviewSetup(setup,[...(res.issues||[]),...quality.issues],ticket);
         hideScanProgress();
       }
-    }catch(e){if(handsFree)scanFeedback("Couldn't read this photo. Take another photo of the full screen.");else scanProgress("#scan-progress","Scan needs attention: "+(e.message||e),1);}
+    }catch(e){if(signal?.aborted)return;if(ocr&&!currentScan(ticket))throw e;if(handsFree)scanFeedback("Couldn't read this photo. Take another photo of the full screen.");else scanProgress("#scan-progress","Scan needs attention: "+(e.message||e),1);}
   }
   let sbLib=null;
   const loadScoreboard=()=>sbLib||=(window.ScoreboardScan?Promise.resolve():new Promise((resolve,reject)=>{
@@ -284,11 +326,22 @@
     previousScan={before:{setup:M.clone(S.setup),live:M.clone(S.live),board:M.clone(S.board)},after:{setup:M.clone(setup),live:M.clone(live),board:M.clone(board)}};
     return [{path:["setup"],value:setup},{path:["live"],value:live},{path:["board"],value:board}];
   }
-  async function runBoardScan(file,detected,{handsFree=false}={}){
+  async function runBoardScan(file,detected,{handsFree=false,ocr=null,signal,guard=()=>{}}={}){
     const ticket=scanTicket(file);
     try{
-      await loadScoreboard();
-      let res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
+      let res;
+      if(ocr){
+        const prepared=window.FreeScan.prepareBoard(ocr,{heroes:A.heroes,squad:A.squad.players});
+        if(prepared.cells?.length){
+          const sheet=window.FreeOCR.atlas(file,prepared.cells);
+          try{const enlarged=await window.FreeOCR.read(sheet.canvas,{signal,onProgress:(m,f)=>scanProgress("#board-progress",m.startsWith("Reading")?"Reading enlarged player stats…":m,f)});guard();res=window.FreeScan.applyCells(prepared,sheet.reads(enlarged));}
+          finally{sheet.canvas.width=sheet.canvas.height=0;}
+        }else res=prepared.result;
+      }else{
+        await loadScoreboard();
+        res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
+      }
+      guard();
       requireScan(ticket);
       if(!res.ours?.length){
         if(handsFree){scanFeedback("Scoreboard unclear. Move closer, keep the whole scoreboard in the frame, and retake.");return;}
@@ -299,7 +352,7 @@
       let quality;
       if(handsFree){const automatic=window.ScanQuality.automaticBoard(res,options);res=automatic.result;quality=automatic.quality;}
       else quality=window.ScanQuality.assess("scoreboard",res,options);
-      const board={at:file._capturedAt,capturedAt:file._capturedAt,clock:detected?.clockRead?.seconds??photoTime.gameTime(file,S.clock.startedAt),sessionId:S.id,sourceLayout:res.sourceLayout,ours:res.ours,theirs:res.theirs};
+      const board={at:file._capturedAt,capturedAt:file._capturedAt,clock:detected?.clockRead?.seconds??(window.ScanQuality.reliability(res.readConfidence?.clock,res.clock)>=90?res.clock:photoTime.gameTime(file,S.clock.startedAt)),sessionId:S.id,sourceLayout:res.sourceLayout,ours:res.ours,theirs:res.theirs};
       lastBoardRead={board:M.clone(board),issues:res.issues||[],sessionId:S.id};
       if(quality.auto){
         board.autoApplied=true;
@@ -308,12 +361,12 @@
           if(!row.inventoryConfirmed)row.items=Array(6).fill(null);
         });
         const clean=cleanBoard(board),changes=boardChanges(clean);
-        savedScan(changes,ticket,"scoreboard");
+        guard();savedScan(changes,ticket,"scoreboard");
         lastBoardRead.ticket={sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
         hideScanProgress();toast("Scoreboard updated. Unclear values stay unknown.");
       }else if(handsFree){scanFeedback("Scoreboard unclear. Move closer, hold the phone level, and take another photo.");}
       else{reviewBoard(board,[...(res.issues||[]),...quality.issues],ticket);hideScanProgress();}
-    }catch(e){if(handsFree)scanFeedback("Couldn't update from this photo. Take another photo of the current scoreboard.");else scanProgress("#board-progress","Scan needs attention: "+(e.message||e),1);}
+    }catch(e){if(signal?.aborted)return;if(ocr&&!currentScan(ticket))throw e;if(handsFree)scanFeedback("Couldn't update from this photo. Take another photo of the current scoreboard.");else scanProgress("#board-progress","Scan needs attention: "+(e.message||e),1);}
   }
   window.__reviewLastScan=()=>{
     if(!lastBoardRead||lastBoardRead.sessionId!==S.id||Date.now()-lastBoardRead.board.at>180000)return toast("Scan a fresh scoreboard first.");
@@ -321,22 +374,21 @@
     reviewBoard(M.clone(lastBoardRead.board),lastBoardRead.issues,t,true);
   };
   async function runAutoPhoto(file,forcedKind){
-    scanTicket(file);
+    const job=beginPhoto(file);if(!job)return;
     $("#scan-review").hidden=true;$("#map-review").hidden=true;
-    await exclusiveScan(async()=>{
-      try{
-      const detected=forcedKind?{kind:forcedKind}:await window.PhotoRouter.detect(file,{heroes:A.heroes,items:A.items,onProgress:(m,f)=>scanProgress("#scan-progress",m,f)});
-      requireScan(file._scanTicket);
-      const kind=detected.kind;
-      // The dedicated reader verifies an uncertain route; the player never has
-      // to choose a screen type or fill in a review form after taking a photo.
-      if(kind==="scoreboard"||kind==="unknown")await runBoardScan(file,detected,{handsFree:true});
-      else if(kind==="loading")await runScan(file,{handsFree:true});
-      else if(kind==="build"||kind==="shop"){
-        scanFeedback("Item shop recognized. Photograph the scoreboard to update live player stats.");
-      }else scanFeedback("HUD recognized. Open the scoreboard and take a photo to update player stats.");
-      }catch(e){scanFeedback(currentScan(file._scanTicket)?"Couldn't read this photo. Take another photo of the scoreboard.":"Match changed. Take a new photo for this match.");}
-    });
+    try{
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      requirePhoto(job);job.image=await decodePhoto(file,job);requirePhoto(job);
+      const ocr=await window.FreeOCR.read(job.image,{signal:job.controller.signal,onProgress:(m,f)=>photoProgress(job,m,f)});
+      requirePhoto(job);photoProgress(job,"Checking the photo…",.92);
+      const detected=forcedKind?{kind:forcedKind}:window.PhotoRouter.classify(ocr.lines,{heroes:A.heroes,items:A.items,width:job.image.width,height:job.image.height});
+      const options={handsFree:true,ocr,signal:job.controller.signal,guard:()=>requirePhoto(job)};
+      if(detected.kind==="scoreboard"||detected.kind==="unknown")await runBoardScan(job.image,detected,options);
+      else if(detected.kind==="loading")await runScan(job.image,options);
+      else if(detected.kind==="build"||detected.kind==="shop")scanFeedback("Item shop recognized. Photograph the scoreboard to update live player stats.");
+      else scanFeedback("HUD recognized. Open the scoreboard and take a photo to update player stats.");
+    }catch(e){if(activePhoto===job&&!job.controller.signal.aborted)scanFeedback(currentScan(job.ticket)?(e.message||"Could not read this photo. Try a closer scoreboard photo."):"Match changed. Take a new photo for this match.");}
+    finally{finishPhoto(job);}
   }
 
   function renderBoard() {
@@ -354,7 +406,7 @@
       <div class="bl-vs">${side(l.hero, l.o)}<span class="muted">vs</span>${side(l.opp, l.e)}</div></div>`).join("");
     el.innerHTML = `<div class="tile board">
       <div class="board-head"><b>Scoreboard</b> <span class="muted">${b.clock != null ? `at ${fmt(b.clock)} · ` : ""}${ago ? `${ago} min ago` : "just now"}</span>
-        <span class="board-tot">Gold ${st.goldDiff == null ? "—" : (st.goldEstimated ? "≈" : "") + diff(st.goldDiff / 1000, "k", 1)} · Kills ${st.us.kills}–${st.them.kills} · Avg level ${st.lvlDiff == null ? "—" : diff(st.lvlDiff, "", 1)}</span></div>
+        <span class="board-tot">Gold ${st.goldDiff == null ? "—" : (st.goldEstimated ? "≈" : "") + diff(st.goldDiff / 1000, "k", 1)} · Kills ${st.us.kills??"—"}–${st.them.kills??"—"} · Avg level ${st.lvlDiff == null ? "—" : diff(st.lvlDiff, "", 1)}</span></div>
       <div class="bl">${rows}</div>
       <p class="note" style="margin:6px 0 0">${ago >= 3 ? "Snapshot is stale — rescan before acting. " : ""}Use Scan scoreboard to review and correct every number.</p></div>`;
   }
@@ -617,7 +669,7 @@
       el.querySelectorAll("select[data-side]").forEach(x=>setup[x.dataset.side][x.dataset.role]={...setup[x.dataset.side][x.dataset.role],hero:x.value});
       const errors=M.validateSetup(setup);if(errors.length)throw new Error(errors.join(" "));
       previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
-      savedScan([{path:["setup"],value:setup}],ticket,"loading");el.hidden=true;
+      guard();savedScan([{path:["setup"],value:setup}],ticket,"loading");el.hidden=true;
     }catch(e){toast(e.message);}};
   }
   function reviewBoard(board,issues,ticket,equipment=false){
@@ -756,7 +808,7 @@
     for(const id of ["auto-photo-file","scan-file","board-file","map-file"]){$("#"+id).onchange=e=>{const file=e.target.files?.[0];if(file){scanTicket(file);matchFocus?.reading();runAutoPhoto(file);}e.target.value="";};}
     $("#match-clear").onclick=()=>{
       if(!confirm("Clear this match for everyone in the room?"))return;
-      scanAnnouncements.clear();lastBoardRead=null;previousScan=null;$("#scan-review").hidden=true;$("#map-review").hidden=true;hideScanProgress();replaceState(blank());toast("Match cleared");
+      cancelPhoto("",true);scanAnnouncements.clear();lastBoardRead=null;previousScan=null;$("#scan-review").hidden=true;$("#map-review").hidden=true;hideScanProgress();replaceState(blank());toast("Match cleared");
     };
     matchFocus=window.SquadMatchFocus.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast,onScan:()=>$("#camera-open").click()});window.__matchFocus=matchFocus;
     renderWake(); renderRoom(); render();
