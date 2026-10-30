@@ -24,7 +24,7 @@
   let previousScan = null, scanBusy = false, pendingPlanOpen = false;
   let room = null;          // { code, client, channel }
   let me = store.get("squad-me", "");
-  let tick = null, lastLifecycleStage = null;
+  let tick = null, lastLifecycleStage = null, intakeMode = "scan", draftGameTime = null, draftGameSession = S.id;
   const planningUI=window.SquadPlanning.create({app:A,getState:()=>S,getMe:()=>me,commit,toast,exclusiveScan});
   const optimizerUI=window.SquadOptimizerUI.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast});
   window.__optimizerResult=()=>optimizerUI.getResult();
@@ -43,6 +43,7 @@
   function receive(data) {
     if (!room || data.version < room.version) return;
     room.version = data.version; room.base = M.normalize(data.state);
+    for(const [id,notice] of scanAnnouncements){if((data.state?._operations||[]).includes(id)){scanAnnouncements.delete(id);if(notice.sessionId===data.state.id&&notice.roomCode===room.code)queueMicrotask(()=>{if(room?.code!==notice.roomCode||S.id!==notice.sessionId||me!==notice.who||room.pending.some(p=>!(room.base._operations||[]).includes(p.id))||scanEvidenceKey(S)!==notice.evidence)return;matchFocus?.noticeScan(notice.kind,id);});}}
     S = applyChanges(M.clone(room.base), room.pending.filter(p => !(data.state?._operations || []).includes(p.id)).flatMap(p => p.changes)); persist(); render();
   }
   async function refreshRoom() {
@@ -65,7 +66,7 @@
         if (room !== current) return;
         if (error) {
           if (/conflict/i.test(error.message)) {
-            current.pending.shift(); store.set("squad-outbox-"+current.code,current.pending);
+            scanAnnouncements.delete(op.id);current.pending.shift(); store.set("squad-outbox-"+current.code,current.pending);
             await refreshRoom(); toast("Room changed. Review the latest state and apply your scan again."); continue;
           }
           current.status = "Sync failed — retry"; toast("Sync failed: " + error.message); break;
@@ -82,7 +83,7 @@
       room.pending.push({id:crypto.randomUUID(), changes:M.clone(changes), expected:strict === false ? null : typeof strict === "number" ? strict : room.version});
       store.set("squad-outbox-"+room.code,room.pending);
     }
-    applyChanges(S, changes); persist(); render(); flush();
+    applyChanges(S, changes); persist(); render(); flush();return room?.pending.at(-1)?.id||null;
   }
   function setPath(path, value) { commit([{path,value}]); }
   function replaceState(next) { commit(Object.entries(next).filter(([k])=>!k.startsWith("_")).map(([k,value])=>({path:[k],value}))); }
@@ -191,48 +192,154 @@
   const clockSec = () => S.clock && S.clock.startedAt ? Math.max(0, Math.floor(((S.stage === "finished" ? S.finishedAt : Date.now()) - S.clock.startedAt) / 1000)) : null;
   const fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-  // ---------- scan ----------
-  async function runScan(file) {
-    const box = $("#scan-progress"); box.hidden = false;
-    const bar = box.querySelector("i"), txt = box.querySelector("span");
-    try {
-      const res = await window.LoadingScan.scan(file, A.heroes, A.squad.players, (msg, f) => { txt.textContent = msg; bar.style.width = Math.round(f * 100) + "%"; });
-      const ours = {}, theirs = {};
-      for (const r of ROLES) {
-        if (res.ours[r]) ours[r] = { hero: res.ours[r].hero || "", who: res.ours[r].who || ((S.setup.ours[r] || {}).who) || "" };
-        if (res.theirs[r]) theirs[r] = { hero: res.theirs[r].hero || "" };
-      }
-      const setup = M.clone(S.setup);
-      for (const role of ROLES) {
-        if (ours[role]?.hero) setup.ours[role] = { ...setup.ours[role], ...ours[role] };
-        if (theirs[role]?.hero) setup.theirs[role] = { ...setup.theirs[role], ...theirs[role] };
-      }
-      reviewSetup(setup, res.issues);
-      txt.textContent = res.issues.length ? res.issues.join(" ") : "All 10 heroes read — tap who's who if needed.";
-      bar.style.width = "100%";
-    } catch (e) { txt.textContent = "Scan failed: " + (e.message || e); }
-  }
 
-  // ---------- scoreboard scan (mid-match) ----------
-  let sbLib = null;
-  const loadScoreboard = () => sbLib ||= (window.ScoreboardScan ? Promise.resolve() : new Promise((res, rej) => {
-    const s = document.createElement("script"); s.src = "scoreboard.js"; s.onload = res; s.onerror = () => rej(new Error("Couldn't load the scoreboard reader")); document.head.appendChild(s);
+  // Photo context is captured before OCR; a reset, identity or room change invalidates it.
+  const photoTime=window.PhotoTime;
+  let matchFocus=null,lastBoardRead=null;
+  const scanAnnouncements=new Map();
+  function scanTicket(file){
+    photoTime.stamp(file);
+    return file._scanTicket ||= {sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
+  }
+  function currentScan(t){
+    return t&&S.id===t.sessionId&&(room?.code||null)===t.roomCode&&(room?.version??null)===t.version&&JSON.stringify(S.setup)===t.setup&&S.stage===t.stage&&JSON.stringify(S.clock)===t.clock&&me===t.who;
+  }
+  function requireScan(t){if(!currentScan(t))throw new Error("Match or room changed. Scan again for the current match.");}
+  function scanEvidenceKey(state){return JSON.stringify([state.setup,state.board,state.objectives,state.buildPlans,state.pivotIntents,state.stage,state.clock]);}
+  function savedScan(changes,ticket,kind="scoreboard"){
+    requireScan(ticket);
+    const id=commit(changes,ticket.version??true);
+    if(room)scanAnnouncements.set(id,{sessionId:ticket.sessionId,roomCode:ticket.roomCode,kind,who:me,evidence:scanEvidenceKey(S)});
+    else matchFocus?.noticeScan(kind,crypto.randomUUID());
+    return id;
+  }
+  function scanProgress(id,message,fraction){
+    const box=$(id);box.querySelectorAll("button").forEach(b=>b.remove());box.hidden=false;box.querySelector("span").textContent=message;
+    box.querySelector("i").style.width=Math.round((fraction||0)*100)+"%";
+  }
+  function hideScanProgress(){ $("#scan-progress").hidden=true;$("#board-progress").hidden=true; }
+  function setupFromRead(res){
+    const setup=M.clone(S.setup),identified=new Set();
+    for(const side of ["ours","theirs"])for(const role of ROLES){
+      const row=res[side]?.[role];if(!row?.hero)continue;
+      const previous=setup[side][role]||{};
+      setup[side][role]={...previous,hero:row.hero};
+      if(side==="ours"&&row.who){identified.add(row.who);setup.ours[role].who=row.who;}
+      else if(side==="ours"&&previous.hero!==row.hero)setup.ours[role].who="";
+    }
+    for(const role of ROLES)if(identified.has(setup.ours[role]?.who)&&res.ours?.[role]?.who!==setup.ours[role].who)setup.ours[role].who="";
+    return setup;
+  }
+  async function runScan(file){
+    const ticket=scanTicket(file);
+    try{
+      const res=await window.LoadingScan.scan(file,A.heroes,A.squad.players,(m,f)=>scanProgress("#scan-progress",m,f));
+      requireScan(ticket);
+      const setup=setupFromRead(res),quality=window.ScanQuality.assess("loading",res,{heroes:A.heroes,items:A.items,squad:A.squad.players});
+      if(quality.auto&&!M.validateSetup(setup).length){
+        previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
+        savedScan([{path:["setup"],value:setup}],ticket,"loading");hideScanProgress();toast("Lineup updated.");
+      }else{
+        reviewSetup(setup,[...(res.issues||[]),...quality.issues],ticket);
+        hideScanProgress();
+      }
+    }catch(e){scanProgress("#scan-progress","Scan needs attention: "+(e.message||e),1);}
+  }
+  let sbLib=null;
+  const loadScoreboard=()=>sbLib||=(window.ScoreboardScan?Promise.resolve():new Promise((resolve,reject)=>{
+    const script=document.createElement("script");script.src="scoreboard.js";script.onload=resolve;script.onerror=()=>reject(new Error("Couldn't load the scoreboard reader"));document.head.append(script);
   }));
-  async function runBoardScan(file) {
-    const scanStartedAt=Date.now(), scanClock=clockSec(), sessionId=S.id;
-    const box = $("#board-progress"); box.hidden = false;
-    const bar = box.querySelector("i"), txt = box.querySelector("span");
-    try {
+  function cleanBoard(board){
+    const out={at:board.at,capturedAt:board.capturedAt,clock:board.clock,sessionId:board.sessionId,scanId:crypto.randomUUID(),sourceLayout:board.sourceLayout};
+    for(const side of ["ours","theirs"])out[side]=board[side].map((r,i)=>{
+      const row={role:ROLES[i],hero:r.hero||null,items:Array.from({length:6},(_,j)=>r.items?.[j]??null),
+        inventoryConfirmed:r.inventoryConfirmed===true,inventoryComplete:r.inventoryComplete===true,inventoryAt:board.at};
+      for(const k of ["lvl","k","d","a","gold","cs","currentGold"])row[k]=Number.isFinite(r[k])?r[k]:null;
+      if(r.who)row.who=r.who;
+      return row;
+    });
+    return out;
+  }
+  function boardChanges(board,whoRows){
+    if(S.board?.sessionId===S.id&&board.at<S.board.at-1000)throw new Error("A newer scoreboard is already saved. Scan a current photo.");
+    M.validateBoard(board,{items:A.items,heroes:A.heroes,sessionId:S.id});
+    const setup=M.clone(S.setup),live=M.clone(S.live),identified=new Set();
+    for(const side of ["ours","theirs"])ROLES.forEach((role,i)=>{
+      const row=board[side][i],old=setup[side][role]||{};
+      setup[side][role]={...old,hero:row.hero||""};
+      if(side==="ours"){
+        const who=whoRows?whoRows[i]:row.who||(old.hero===row.hero?old.who:"");
+        setup.ours[role].who=who||"";if(row.who)identified.add(row.who);
+      }
+    });
+    if(!whoRows)ROLES.forEach((role,i)=>{const who=setup.ours[role].who;if(identified.has(who)&&board.ours[i].who!==who)setup.ours[role].who="";});
+    const errors=M.validateSetup(setup);if(errors.length)throw new Error(errors.join(" "));
+    ROLES.forEach((r,i)=>{const who=setup.ours[r].who;if(who&&board.ours[i].d!=null)live[who]={...live[who],deaths:board.ours[i].d};});
+    for(const role of ROLES)setup.theirs[role].fed=false;
+    const st=E.boardState(board,setup,A.T);
+    for(const f of st.fed)setup.theirs[f.role]={...setup.theirs[f.role],fed:true};
+    previousScan={before:{setup:M.clone(S.setup),live:M.clone(S.live),board:M.clone(S.board)},after:{setup:M.clone(setup),live:M.clone(live),board:M.clone(board)}};
+    return [{path:["setup"],value:setup},{path:["live"],value:live},{path:["board"],value:board}];
+  }
+  async function runBoardScan(file,detected){
+    const ticket=scanTicket(file);
+    try{
       await loadScoreboard();
-      const known = {}; // Read heroes again; previous setup may be wrong or from another match.
-      const res = await window.ScoreboardScan.scan(file, { heroes: A.heroes, known, itemTemplates:A.itemTemplates, items:A.items, patch:A.itemPatch, onProgress: (m, f) => { txt.textContent = m; bar.style.width = Math.round(f * 100) + "%"; } });
-      if (!res.ours.length) { txt.textContent = res.issues.join(" "); return; }
-      if(S.id!==sessionId)return toast("Match changed while scanning. Scan again for the current match.");
-      const board = { at: file._capturedAt || scanStartedAt, capturedAt:file._capturedAt || null, clock:scanClock, sessionId, ours:res.ours, theirs:res.theirs };
-      reviewBoard(board, res.issues);
-      txt.textContent = res.issues.length ? res.issues.join(" ") : "Scoreboard read — review heroes, levels and items before updating the plan.";
-      bar.style.width = "100%";
-    } catch (e) { txt.textContent = "Scan failed: " + (e.message || e); }
+      const res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
+      requireScan(ticket);
+      if(!res.ours?.length){
+        scanProgress("#board-progress",(res.issues||["No scoreboard rows found."]).join(" "),1);
+        const button=document.createElement("button");button.type="button";button.className="chip";button.textContent="Straighten photo and retry";button.onclick=()=>{hideScanProgress();preparePhoto(file,runBoardScan);};$("#board-progress").append(button);return;
+      }
+      const quality=window.ScanQuality.assess("scoreboard",res,{heroes:A.heroes,items:A.items,squad:A.squad.players});
+      const board={at:file._capturedAt,capturedAt:file._capturedAt,clock:detected?.clockRead?.seconds??photoTime.gameTime(file,S.clock.startedAt),sessionId:S.id,sourceLayout:res.sourceLayout,ours:res.ours,theirs:res.theirs};
+      lastBoardRead={board:M.clone(board),issues:res.issues||[],sessionId:S.id};
+      if(quality.auto){
+        for(const side of ["ours","theirs"])board[side].forEach((row,i)=>{
+          row.inventoryConfirmed=quality.inventoryReady[side][i];row.inventoryComplete=row.inventoryConfirmed;
+          if(!row.inventoryConfirmed)row.items=Array(6).fill(null);
+        });
+        const clean=cleanBoard(board),changes=boardChanges(clean);
+        savedScan(changes,ticket,"scoreboard");
+        lastBoardRead.ticket={sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
+        hideScanProgress();toast("Numbers updated. "+(Object.values(quality.inventoryReady).flat().every(Boolean)?"Equipment updated.":"Review equipment for item advice."));
+      }else{reviewBoard(board,[...(res.issues||[]),...quality.issues],ticket);hideScanProgress();}
+    }catch(e){scanProgress("#board-progress","Scan needs attention: "+(e.message||e),1);}
+  }
+  window.__reviewLastScan=()=>{
+    if(!lastBoardRead||lastBoardRead.sessionId!==S.id||Date.now()-lastBoardRead.board.at>180000)return toast("Scan a fresh scoreboard first.");
+    const t={sessionId:S.id,roomCode:room?.code||null,version:room?.version??null,setup:JSON.stringify(S.setup),stage:S.stage,clock:JSON.stringify(S.clock),who:me};
+    reviewBoard(M.clone(lastBoardRead.board),lastBoardRead.issues,t,true);
+  };
+  function chooseScreen(){
+    return new Promise(resolve=>{
+      const d=document.createElement("dialog");d.className="screen-choice";d.setAttribute("aria-label","Choose photo screen");
+      d.innerHTML='<h3>What is in this photo?</h3><p>The screen type was uncertain.</p>'+[["scoreboard","Scoreboard"],["build","Build / item shop"],["loading","Loading screen"],["minimap","HUD / minimap"]].map(([k,v])=>'<button class="chip" data-screen="'+k+'">'+v+'</button>').join("")+'<button class="chip ghost" data-cancel>Cancel</button>';
+      const done=k=>{d.close();d.remove();resolve(k);};document.body.append(d);d.showModal();
+      d.querySelectorAll("[data-screen]").forEach(b=>b.onclick=()=>done(b.dataset.screen));d.querySelector("[data-cancel]").onclick=()=>done(null);d.oncancel=e=>{e.preventDefault();done(null);};
+    });
+  }
+  async function runAutoPhoto(file,forcedKind){
+    scanTicket(file);
+    let follow=null;
+    await exclusiveScan(async()=>{
+      let detected=forcedKind?{kind:forcedKind}:await window.PhotoRouter.detect(file,{heroes:A.heroes,items:A.items,onProgress:(m,f)=>scanProgress("#scan-progress",m,f)});
+      requireScan(file._scanTicket);
+      const kind=detected.kind==="unknown"?await chooseScreen():detected.kind;
+      if(!kind)return hideScanProgress();
+      requireScan(file._scanTicket);
+      if(kind==="scoreboard")await runBoardScan(file,detected);
+      else if(kind==="loading")await runScan(file);
+      else if(kind==="build"||kind==="shop"){
+        const parsed=detected.lines?.length?window.BuildScan.parse(detected.lines,A.items):null;follow={kind:"build",file,parsed};hideScanProgress();
+      }else{follow={kind:"minimap",file};hideScanProgress();}
+    });
+    if(follow?.kind==="minimap")await openMap(file);
+    else if(follow?.kind==="build"){
+      requireScan(file._scanTicket);
+      let who=me;if(!who){who=await chooseIdentity(A.squad.players.map(p=>p.key));if(!who)return;me=who;store.set("squad-me",who);$("#me").value=who;render();}
+      planningUI.open(who,{file,parsed:follow.parsed});
+    }
   }
 
   function renderBoard() {
@@ -309,13 +416,14 @@
     const present = ROLES.map(r => (S.setup.ours[r] || {}).who).filter(Boolean);
     const sec = clockSec();
     const next = nextObjective(sec);
+    $("#clock").hidden=sec==null;
     $("#clock").innerHTML = sec == null
-      ? `<button class="chip cta" type="button" id="clock-start">Start match</button><span class="muted" style="font-size:12px">Tap when the match starts (0:00) for objective timers.</span>`
+      ? ""
       : `<div class="clock-big">${fmt(sec)}</div><div class="clock-next">${next ? `${esc(next.label)} in <b>${fmt(next.t - sec)}</b>` : "Record an objective observation below"}</div>
          <div class="clock-adj"><button class="chip ghost" data-adj="-10">−10s</button><button class="chip ghost" data-adj="10">+10s</button><button class="chip ghost" id="clock-reset">Reset</button></div>`;
     const cs = $("#clock-start"); if (cs) cs.onclick = startMatch;
     $("#clock").querySelectorAll("[data-adj]").forEach(b => b.onclick = () => setPath(["clock", "startedAt"], S.clock.startedAt - (+b.dataset.adj) * 1000));
-    const cr = $("#clock-reset"); if (cr) cr.onclick = () => { if(confirm("Reset the clock and objective observations?")) commit([{path:["clock"],value:{}},{path:["objectives"],value:{}},{path:["stage"],value:"draft"}]); };
+    const cr = $("#clock-reset"); if (cr) cr.onclick = () => { if(confirm("Reset the clock and objective observations?")){draftGameTime="0:00";commit([{path:["clock"],value:{}},{path:["objectives"],value:{}},{path:["stage"],value:"draft"}]);} };
 
     $("#tracker").innerHTML = present.length ? present.map(m => {
       const lv = S.live[m] || {};
@@ -366,8 +474,8 @@
       ${order.length ? `<div class="sub-h">Your squad</div>` : ""}${order.map(m => mine[Object.keys(plan.members).indexOf(m)]).join("")}`;
   }
 
-  function render() { planningUI.render(); renderLifecycle(); renderSetup(); renderLive(); renderBoard(); renderStrategy(); renderObjectives(); renderPostmatch(); }
-  window.__matchRender = () => { renderStrategy(); renderPostmatch(); };
+  function render() { planningUI.render(); renderLifecycle(); renderSetup(); renderLive(); renderBoard(); renderStrategy(); renderObjectives(); renderPostmatch();matchFocus?.render(); }
+  window.__matchRender = () => { renderStrategy(); renderPostmatch();matchFocus?.render(); };
 
   // ---------- toast ----------
   let toastT; function toast(msg) {
@@ -400,7 +508,7 @@
       if(room)leaveRoom(true);
       me=who;store.set("squad-me",me);$("#me").value=me;
       S=next;persist();handoff.clear();previousScan=null;renderRoom();render();
-      toast("Plan loaded. Edit lanes and heroes, then start the match.");
+      toast("Recommended build loaded. Choose your lane, review the build and start game.");
     } catch(e){toast(e.message);handoff.clear();}
     finally{pendingPlanOpen=false;}
   }
@@ -410,21 +518,37 @@
         const who=await chooseIdentity(Object.values(S.setup.ours).map(p=>p.who).filter(Boolean));
         if(!who)return;me=who;store.set("squad-me",me);$("#me").value=me;
       }
-      const next=M.start(S,me,Date.now());
+      if(S.stage==="live")return;
+      let seconds=M.parseTime($("#game-time")?.value||"0:00");if(seconds==null)throw new Error("Enter the current game time as m:ss.");
+      const observed=M.observedGameTime(S.board,S.id,Date.now());if(draftGameTime===null&&observed!=null)seconds=observed;
+      const next=M.start(S,me,Date.now()-seconds*1000);
       commit([{path:["stage"],value:next.stage},{path:["clock"],value:next.clock}]);
       if(wake.supported && store.get("squad-wake",null)!==false)wake.enable();
     }catch(e){toast(e.message);}
   }
   function renderLifecycle() {
-    const issues=M.validateSetup(S.setup), el=$("#lifecycle");
-    if(lastLifecycleStage!==S.stage){const details=$("#match-lineup-details");if(details)details.open=S.stage!=="live";lastLifecycleStage=S.stage;}
-    el.innerHTML=`<b>${S.stage==="live"?"Match in progress":S.stage==="finished"?"Match finished":S.stage==="ready"?"Ready to play":"Pre-match plan"}</b>
-      <p class="note">${S.stage==="live"?"Update your observations below as the match changes.":"Edit lanes, heroes and enemy picks before starting. Sharing a plan does not start the clock."}</p>
-      ${issues.length?`<p class="warn">${issues.map(esc).join(" ")}</p>`:""}
-      <div class="lifecycle-actions">${S.stage==="draft"?'<button type="button" class="chip" id="plan-ready">Mark ready</button>':""}
-      ${S.stage==="live"?'<button type="button" class="chip" id="match-finish">Finish match</button>':""}${previousScan?'<button type="button" class="chip ghost" id="undo-scan">Undo last scan</button>':""}</div>`;
+    const issues=M.validateSetup(S.setup),el=$("#lifecycle"),pregame=S.stage!=="live"&&S.stage!=="finished";
+    if(draftGameSession!==S.id){draftGameSession=S.id;draftGameTime=null;}
+    if(lastLifecycleStage!==S.stage){const details=$("#match-lineup-details");if(details)details.open=false;lastLifecycleStage=S.stage;}
+    const ownRole=ROLES.find(r=>S.setup.ours[r]?.who===me),own=ownRole?S.setup.ours[ownRole]:null;
+    const base=own?window.BuildPlans.getBaseline(planningUI.context(me)):null,plan=base?.status==="ready"?base.plan:null;
+    const sampledClock=M.observedGameTime(S.board,S.id,Date.now())??0,time=draftGameTime??fmt(sampledClock);
+    const laneButtons=pregame?'<div class="quick-lanes" role="group" aria-label="Your lane">'+ROLES.map(r=>'<button type="button" data-quick-lane="'+r+'" aria-pressed="'+(ownRole===r)+'">'+esc(roleName(r))+'</button>').join('')+'</div>':'';
+    const hero=pregame&&own?'<label class="quick-hero">Your hero<select id="quick-hero" aria-label="Your hero"><option value="">Choose hero</option>'+A.heroes.map(h=>'<option value="'+esc(h.slug)+'" '+(own.hero===h.slug?'selected':'')+'>'+esc(h.name)+'</option>').join('')+'</select></label>':'';
+    const items=pregame&&plan?'<ol class="quick-build-items">'+plan.items.map(n=>'<li>'+planningUI.icon(A.items.find(i=>i.name===n),32)+'<span>'+esc(planningUI.itemName(n))+'</span></li>').join('')+'</ol>':'';
+    const intake=S.stage==="finished"?'':'<div class="intake-switch" role="group" aria-label="Build input"><button type="button" data-intake="scan" aria-pressed="'+(intakeMode==="scan")+'">Scan scoreboard &amp; builds</button><button type="button" data-intake="manual" aria-pressed="'+(intakeMode==="manual")+'">Build manually</button></div><div class="intake-panel">'+(intakeMode==="scan"?'<p class="note">Scan the scoreboard and equipment, then review the suggested response.</p><button class="chip ghost" type="button" id="prep-board">Scan scoreboard &amp; builds</button>':'<p class="note">Choose and review your six intended items. These stay separate from owned equipment.</p><button class="chip ghost" type="button" id="prep-manual">Choose build items</button>')+'</div>';
+    el.innerHTML='<b>'+(pregame?'Recommended build':S.stage==="live"?'Match in progress':'Match finished')+'</b>'+(pregame?'<p class="note">Choose your lane, review your build and start tracking the game.</p>':'')+laneButtons+hero+items+intake+(issues.length?'<p class="warn">'+issues.map(esc).join(' ')+'</p>':'')+(pregame?'<label class="quick-game-time">Game time now<input id="game-time" aria-label="Game time now" inputmode="numeric" value="'+esc(time)+'" placeholder="0:00"></label><p class="note">Enter the time already showing in game. A reviewed screenshot clock is used automatically.</p>':'')+'<div class="lifecycle-actions">'+(pregame?'<button type="button" class="chip cta" id="clock-start">Start game</button>':'')+(S.stage==="live"?'<button type="button" class="chip" id="match-finish">Finish match</button>':'')+(previousScan?'<button type="button" class="chip ghost" id="undo-scan">Undo last scan</button>':'')+'</div>';
+    el.querySelectorAll('[data-intake]').forEach(b=>b.onclick=()=>{intakeMode=b.dataset.intake;renderLifecycle();});
+    el.querySelectorAll('[data-quick-lane]').forEach(b=>b.onclick=async()=>{try{
+      if(!me){const who=await chooseIdentity(A.squad.players.map(p=>p.key));if(!who)return;me=who;store.set("squad-me",me);$("#me").value=me;}
+      const setup=M.chooseLane(S.setup,me,b.dataset.quickLane);commit([{path:["setup"],value:setup},{path:["stage"],value:"draft"}],true);
+    }catch(e){toast(e.message);}});
+    const hs=$("#quick-hero");if(hs)hs.onchange=()=>{const setup=M.clone(S.setup);setup.ours[ownRole].hero=hs.value;const bad=M.validateSetup(setup).filter(s=>!s.startsWith("Choose a hero"));if(bad.length){toast(bad.join(" "));renderLifecycle();return;}commit([{path:["setup"],value:setup},{path:["stage"],value:"draft"}],true);};
+    const timeInput=$("#game-time");if(timeInput)timeInput.oninput=()=>draftGameTime=timeInput.value;
+    const scan=$("#prep-board");if(scan)scan.onclick=()=>$("#auto-photo-file").click();
+    const manual=$("#prep-manual");if(manual)manual.onclick=()=>planningUI.open(me);
+    const start=$("#clock-start");if(start)start.onclick=startMatch;
     const undo=$("#undo-scan");if(undo)undo.onclick=()=>{const old=previousScan;if(Object.entries(old.after).some(([k,value])=>JSON.stringify(S[k])!==JSON.stringify(value)))return toast("Match changed since this scan. Correct the current values instead of undoing newer edits.");previousScan=null;commit(Object.entries(old.before).map(([k,value])=>({path:[k],value})),true);};
-    const ready=$("#plan-ready");if(ready)ready.onclick=()=>{if(issues.length)return toast(issues.join(" "));if(!Object.values(S.setup.ours).some(p=>p.who&&p.hero))return toast("Assign at least one player and hero.");setPath(["stage"],"ready");};
     const finish=$("#match-finish");if(finish)finish.onclick=()=>commit([{path:["stage"],value:"finished"},{path:["finishedAt"],value:Date.now()}]);
   }
   const OBJECTIVES=[{key:"fangtooth",label:"Fangtooth"},{key:"orb",label:"Orb Prime"},{key:"shaper",label:"Shaper"}];
@@ -459,6 +583,7 @@
   }
   async function preparePhoto(file,reader) {
     if(scanBusy)return toast("Wait for the current scan to finish.");
+    scanTicket(file);
     try {
       const img=await createImageBitmap(file),dialog=document.createElement("dialog");
       dialog.setAttribute("aria-label","Prepare screen photo");
@@ -470,81 +595,75 @@
       $("#photo-reset").onclick=()=>{points=[];draw();$("#photo-instruction").textContent="Tap top left.";};
       $("#photo-cancel").onclick=close;dialog.oncancel=e=>{e.preventDefault();close();};
       $("#photo-original").onclick=()=>{close();exclusiveScan(()=>reader(file));};
-      $("#photo-correct").onclick=()=>{try{const corrected=window.PhotoPrep.rectify(img,points);corrected._originalSource=file;close();exclusiveScan(()=>reader(corrected));}catch(e){toast(e.message);}};
+      $("#photo-correct").onclick=()=>{try{const corrected=window.PhotoPrep.rectify(img,points);photoTime.copy(file,corrected);corrected._originalSource=file;close();exclusiveScan(()=>reader(corrected));}catch(e){toast(e.message);}};
     }catch(e){toast("Couldn't open photo: "+e.message);}
   }
   async function exclusiveScan(fn) {
     if(scanBusy)return toast("Wait for the current scan to finish.");
-    scanBusy=true;try{await fn();}catch(e){toast(e.message);}finally{scanBusy=false;}
+    scanBusy=true;try{return await fn();}catch(e){toast(e.message);}finally{scanBusy=false;}
   }
-  function reviewSetup(setup,issues) {
-    const reviewedVersion=room?.version;
-    const el=$("#scan-review");el.hidden=false;
-    el.innerHTML=`<h3>Review loading screen</h3><p class="note">${esc((issues||[]).join(" "))} Unread slots keep your existing choices.</p>`+ROLES.map(role=>`<div class="review-grid"><b>${roleName(role)}</b>${["ours","theirs"].map(side=>`<label>${side==="ours"?"Your team":"Enemy"}<select data-side="${side}" data-role="${role}"><option value="">Unknown</option>${A.heroes.map(h=>`<option value="${esc(h.slug)}" ${setup[side][role]?.hero===h.slug?"selected":""}>${esc(h.name)}</option>`).join("")}</select></label>`).join("")}</div>`).join("")+`<button class="chip cta" id="scan-apply">Apply scan</button><button class="chip" id="scan-cancel">Cancel</button>`;
-    $("#scan-cancel").onclick=()=>el.hidden=true;
-    $("#scan-apply").onclick=()=>{
-      el.querySelectorAll("select").forEach(x=>{setup[x.dataset.side][x.dataset.role]={...setup[x.dataset.side][x.dataset.role],hero:x.value};});
-      const issues=M.validateSetup(setup);if(issues.length)return toast(issues.join(" "));
-      previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};commit([{path:["setup"],value:setup}],reviewedVersion ?? true);el.hidden=true;
-    };
+
+  function reviewPager(el){
+    const pages=[...el.querySelectorAll(".review-player")];let index=Math.max(0,pages.findIndex(p=>p.dataset.side==="ours"&&S.setup.ours[ROLES[+p.dataset.row]]?.who===me));
+    const nav=document.createElement("div");nav.className="review-nav";
+    nav.innerHTML='<button class="chip" data-prev aria-label="Previous player">‹</button><select id="review-player" aria-label="Player to review">'+pages.map((p,i)=>'<option value="'+i+'">'+esc(p.dataset.title)+'</option>').join("")+'</select><button class="chip" data-next aria-label="Next player">›</button>';
+    el.querySelector(".review-players").before(nav);
+    const show=()=>{pages.forEach((p,i)=>p.hidden=i!==index);nav.querySelector("select").value=String(index);nav.querySelector("[data-prev]").disabled=index===0;nav.querySelector("[data-next]").disabled=index===pages.length-1;};
+    nav.querySelector("select").onchange=e=>{index=+e.target.value;show();};nav.querySelector("[data-prev]").onclick=()=>{index=Math.max(0,index-1);show();};nav.querySelector("[data-next]").onclick=()=>{index=Math.min(pages.length-1,index+1);show();};show();
   }
-  function reviewBoard(board,issues) {
-    const reviewedVersion=room?.version, reviewedSession=S.id;
+  function reviewSetup(setup,issues,ticket){
     const el=$("#scan-review");el.hidden=false;
-    const itemByInput=value=>(A.items||[]).find(it=>it.name.toLowerCase()===value.trim().toLowerCase()||it.label.toLowerCase()===value.trim().toLowerCase());
-    const catalog=new Map((A.items||[]).map(it=>[it.name,it]));
-    const options=(A.items||[]).filter(it=>it.slot!=="TRINKET"&&it.slot!=="CREST");
-    el.innerHTML=`<h3>Review lobby and builds</h3><p class="note">${esc((issues||[]).join(" "))} Verify heroes, levels and the six equipment slots for both teams (exclude crests and trinkets). Gold on the scoreboard is total earned, not spendable.</p>
-      <label>Game time shown in photo <input id="board-clock" placeholder="m:ss" inputmode="numeric"></label>
-      <label><input type="checkbox" id="board-now" ${board.capturedAt&&Date.now()-board.capturedAt<90000?"checked":""}> This photo was taken just now</label>
-      <p class="note">Enter the screenshot's game time to avoid using an old build as current. If the app clock is not running, explicitly confirm a newly taken photo.</p>
-      <datalist id="inventory-catalog">${options.map(it=>`<option value="${esc(it.label)}">${esc(it.name)}</option>`).join("")}</datalist>
-      <div class="review-players">`+
-      ["ours","theirs"].flatMap(side=>board[side].map((row,i)=>`<article class="review-player"><h4>${side==="ours"?"Your team":"Enemy"} · ${roleName(ROLES[i])}</h4><label>Hero<select data-side="${side}" data-row="${i}" data-field="hero"><option value="">Unknown</option>${A.heroes.map(h=>`<option value="${esc(h.slug)}" ${row.hero===h.slug?"selected":""}>${esc(h.name)}</option>`).join("")}</select></label>${side==="ours"?`<label>Player<select data-player-row="${i}" aria-label="Player in ${roleName(ROLES[i])}"><option value="">Other teammate</option>${A.squad.players.map(p=>`<option value="${esc(p.key)}" ${S.setup.ours[ROLES[i]]?.who===p.key?"selected":""}>${esc(p.label)}</option>`).join("")}</select></label>`:""}<div class="review-stats">${["lvl","k","d","a","gold"].map(k=>`<label>${({lvl:"Level",k:"Kills",d:"Deaths",a:"Assists",gold:"Total gold"})[k]}<input class="${row.alternatives?.[k]?"uncertain":""}" title="${row.alternatives?.[k]?esc("Readings disagree: "+row.alternatives[k].join(" or ")):"Verify against photo"}" type="number" min="0" aria-label="${side} ${ROLES[i]} ${k}" data-side="${side}" data-row="${i}" data-field="${k}" value="${row[k]??""}"></label>`).join("")}</div>
-        <details class="inventory-review" data-inventory="${side}-${i}"><summary>Review equipment · ${(row.items||[]).filter(Boolean).length} suggested reads</summary>
-        <div class="inventory-slots">${Array.from({length:6},(_,j)=>`<label>Slot ${j+1}${row.itemPreviews?.[j]?`<img class="item-crop" alt="Item slot ${j+1} from photo" src="${esc(row.itemPreviews[j])}">`:""}<input list="inventory-catalog" data-item-side="${side}" data-item-row="${i}" data-item-slot="${j}" aria-label="${side} ${ROLES[i]} item ${j+1}" placeholder="Unknown / empty" value="${esc(catalog.get(row.items?.[j])?.label||"")}"></label>`).join("")}</div>
-        <label><input type="checkbox" data-confirm-side="${side}" data-confirm-row="${i}"> I checked these item names</label>
-        <label><input type="checkbox" data-complete-side="${side}" data-complete-row="${i}"> All six slots are visible; blank slots are empty</label>
-        ${side==="ours"?`<label>Current spendable gold (optional, from your HUD)<input type="number" min="0" max="99999" data-current-gold="${i}" placeholder="Unknown"></label>`:""}
-        </details></article>`)).join("")+`</div><button class="chip cta" id="scan-apply">Apply lobby snapshot</button><button class="chip" id="scan-cancel">Cancel</button>`;
-    $("#scan-cancel").onclick=()=>el.hidden=true;
-    $("#scan-apply").onclick=()=>{
-      try {
-        if(S.id!==reviewedSession)throw new Error("Match changed. Scan again for the current match.");
-        const pictureClock=M.parseTime($("#board-clock").value);
-        if(pictureClock!=null&&S.clock.startedAt){
-          if(pictureClock>clockSec()+10)throw new Error("Screenshot time is ahead of your app clock. Adjust the clock first.");
-          board.clock=pictureClock;board.at=S.clock.startedAt+pictureClock*1000;
-        }else if($("#board-now").checked){board.at=board.capturedAt||board.at;board.clock=board.clock??clockSec();}
-        else throw new Error("Enter the screenshot game time or confirm the photo was taken just now.");
-        el.querySelectorAll("[data-field]").forEach(x=>board[x.dataset.side][+x.dataset.row][x.dataset.field]=x.dataset.field==="hero"?(x.value||null):(x.value===""?null:Number(x.value)));
-        for(const side of ["ours","theirs"])for(let i=0;i<5;i++){
-          const row=board[side][i];row.items=[];
-          for(const input of el.querySelectorAll(`[data-item-side="${side}"][data-item-row="${i}"]`)){
-            const it=input.value.trim()?itemByInput(input.value):null;
-            if(it&&["CREST","TRINKET"].includes(it.slot))throw new Error("Use equipment items here; crests and trinkets are separate slots.");
-            if(input.value.trim()&&!it)throw new Error(`Choose a catalog item for ${side} ${roleName(ROLES[i])}, slot ${+input.dataset.itemSlot+1}.`);
-            row.items.push(it?.name||null);
-          }
-          row.inventoryConfirmed=el.querySelector(`[data-confirm-side="${side}"][data-confirm-row="${i}"]`).checked;
-          row.inventoryComplete=row.inventoryConfirmed&&el.querySelector(`[data-complete-side="${side}"][data-complete-row="${i}"]`).checked;
-          row.inventoryAt=board.at;row.role=ROLES[i];
-          if(side==="ours"){const value=el.querySelector(`[data-current-gold="${i}"]`).value;row.currentGold=value===""?null:Number(value);}
-          delete row.itemPreviews;delete row.itemCandidates; // Images and descriptors never enter shared state.
+    el.innerHTML='<h3>Review lineup</h3><p class="note">'+esc((issues||[]).join(" "))+'</p><div class="review-players">'+ROLES.map((role,i)=>'<article class="review-player" data-side="ours" data-row="'+i+'" data-title="'+esc(roleName(role))+'"><b>'+esc(roleName(role))+'</b>'+["ours","theirs"].map(side=>'<label>'+(side==="ours"?"Your team":"Enemy")+'<select data-side="'+side+'" data-role="'+role+'"><option value="">Unknown</option>'+A.heroes.map(h=>'<option value="'+esc(h.slug)+'" '+(setup[side][role]?.hero===h.slug?"selected":"")+'>'+esc(h.name)+'</option>').join("")+'</select></label>').join("")+'</article>').join("")+'</div><div class="review-footer"><button class="chip cta" id="scan-apply">Apply lineup</button><button class="chip" id="scan-cancel">Cancel</button></div>';
+    reviewPager(el);$("#scan-cancel").onclick=()=>el.hidden=true;
+    $("#scan-apply").onclick=()=>{try{
+      requireScan(ticket);
+      el.querySelectorAll("select[data-side]").forEach(x=>setup[x.dataset.side][x.dataset.role]={...setup[x.dataset.side][x.dataset.role],hero:x.value});
+      const errors=M.validateSetup(setup);if(errors.length)throw new Error(errors.join(" "));
+      previousScan={before:{setup:M.clone(S.setup)},after:{setup:M.clone(setup)}};
+      savedScan([{path:["setup"],value:setup}],ticket,"loading");el.hidden=true;
+    }catch(e){toast(e.message);}};
+  }
+  function reviewBoard(board,issues,ticket,equipment=false){
+    const el=$("#scan-review");el.hidden=false;
+    const catalog=new Map(A.items.map(it=>[it.name,it])),itemByInput=v=>A.items.find(it=>[it.name,it.label].some(n=>n?.toLowerCase()===v.trim().toLowerCase()));
+    const options=A.items.filter(it=>!["TRINKET","CREST"].includes(it.slot)),fields=board.sourceLayout==="live"?["lvl","k","d","a","cs"]:["lvl","k","d","a","gold"];
+    el.innerHTML='<h3>Review photo</h3><p class="note">'+esc((issues||[]).slice(0,2).join(" "))+' '+(board.sourceLayout==="live"?"Yellow number = farm / CS.":"Gold = total earned, not spendable.")+'</p><label class="review-photo-time">Game time in photo<input id="board-clock" placeholder="m:ss" inputmode="numeric" value="'+(board.clock==null?"":fmt(board.clock))+'"></label><p class="note">Upload time assumes the photo was taken 10 seconds before selection. Change its game time if older.</p><input type="checkbox" id="board-now" checked hidden><datalist id="inventory-catalog">'+options.map(it=>'<option value="'+esc(it.label)+'">'+esc(it.name)+'</option>').join("")+'</datalist><div class="review-players">'+
+    ["ours","theirs"].flatMap(side=>board[side].map((row,i)=>{
+      const title=(side==="ours"?"Your team":"Enemy")+" · "+roleName(ROLES[i]);
+      return '<article class="review-player" data-side="'+side+'" data-row="'+i+'" data-title="'+esc(title)+'"><h4>'+esc(title)+'</h4><div class="review-identities"><label>Hero<select data-side="'+side+'" data-row="'+i+'" data-field="hero"><option value="">Unknown</option>'+A.heroes.map(h=>'<option value="'+esc(h.slug)+'" '+(row.hero===h.slug?"selected":"")+'>'+esc(h.name)+'</option>').join("")+'</select></label>'+
+      (side==="ours"?'<label>Player<select data-player-row="'+i+'" aria-label="Player in '+esc(roleName(ROLES[i]))+'"><option value="">Other teammate</option>'+A.squad.players.map(p=>'<option value="'+esc(p.key)+'" '+((row.who||(S.setup.ours[ROLES[i]]?.hero===row.hero?S.setup.ours[ROLES[i]]?.who:""))===p.key?"selected":"")+'>'+esc(p.label)+'</option>').join("")+'</select></label>':"")+'</div><div class="review-stats">'+fields.map(k=>'<label>'+({lvl:"Level",k:"Kills",d:"Deaths",a:"Assists",gold:"Total gold",cs:"CS"})[k]+'<input class="'+(row.alternatives?.[k]||window.ScanQuality.reliability(row.readConfidence?.[k],row[k])<90?"uncertain":"")+'" title="Verify against the photo" type="number" min="0" aria-label="'+side+' '+ROLES[i]+' '+k+'" data-side="'+side+'" data-row="'+i+'" data-field="'+k+'" value="'+(row[k]??"")+'"></label>').join("")+'</div>'+
+      '<details class="inventory-review" data-inventory="'+side+'-'+i+'" '+(equipment?"open":"")+'><summary>Review equipment</summary><div class="inventory-slots">'+Array.from({length:6},(_,j)=>'<label>Slot '+(j+1)+(row.itemPreviews?.[j]?'<img class="item-crop" alt="Item slot '+(j+1)+' from photo" src="'+esc(row.itemPreviews[j])+'">':"")+'<input list="inventory-catalog" data-item-side="'+side+'" data-item-row="'+i+'" data-item-slot="'+j+'" aria-label="'+side+' '+ROLES[i]+' item '+(j+1)+'" placeholder="Unknown / empty" value="'+esc(catalog.get(row.items?.[j])?.label||"")+'"></label>').join("")+'</div>'+
+      '<label><input type="checkbox" data-confirm-side="'+side+'" data-confirm-row="'+i+'" '+(row.inventoryConfirmed?"checked":"")+'> I checked these item names</label><label><input type="checkbox" data-complete-side="'+side+'" data-complete-row="'+i+'" '+(row.inventoryComplete?"checked":"")+'> All six slots visible; blanks are empty</label>'+
+      (side==="ours"?'<label>Spendable gold (optional, HUD)<input type="number" min="0" max="99999" data-current-gold="'+i+'" value="'+(row.currentGold??"")+'" placeholder="Unknown"></label>':"")+'</details></article>';
+    })).join("")+'</div><div class="review-footer"><button class="chip cta" id="scan-apply">Update strategy</button><button class="chip" id="scan-cancel">Cancel</button></div>';
+    reviewPager(el);$("#scan-cancel").onclick=()=>el.hidden=true;
+    $("#scan-apply").onclick=()=>{try{
+      requireScan(ticket);
+      const text=$("#board-clock").value.trim(),pictureClock=M.parseTime(text);
+      if(text&&pictureClock==null)throw new Error("Enter the photo's game time as m:ss.");
+      if(pictureClock!=null&&S.clock.startedAt){
+        if(pictureClock>clockSec()+10)throw new Error("Photo time is ahead of the app clock. Adjust the match clock first.");
+        if(pictureClock!==board.clock)board.at=S.clock.startedAt+pictureClock*1000;board.clock=pictureClock;
+      }else if(pictureClock!=null)board.clock=pictureClock;
+      el.querySelectorAll("[data-field]").forEach(x=>board[x.dataset.side][+x.dataset.row][x.dataset.field]=x.dataset.field==="hero"?(x.value||null):(x.value===""?null:Number(x.value)));
+      for(const side of ["ours","theirs"])for(let i=0;i<5;i++){
+        const row=board[side][i];row.items=[];
+        for(const input of el.querySelectorAll('[data-item-side="'+side+'"][data-item-row="'+i+'"]')){
+          const it=input.value.trim()?itemByInput(input.value):null;
+          if(input.value.trim()&&!it)throw new Error("Choose an item from the catalogue.");
+          if(it&&["CREST","TRINKET"].includes(it.slot))throw new Error("Use equipment items; crests and trinkets have separate slots.");
+          row.items.push(it?.name||null);
         }
-        M.validateBoard(board,{items:A.items,heroes:A.heroes,sessionId:S.id});
-        const setup=M.clone(S.setup),live=M.clone(S.live),st=E.boardState(board,setup,A.T);
-        for(const side of ["ours","theirs"])ROLES.forEach((r,i)=>{if(board[side][i].hero)setup[side][r]={...setup[side][r],hero:board[side][i].hero};});
-        ROLES.forEach((r,i)=>{setup.ours[r]={...setup.ours[r],who:el.querySelector(`[data-player-row="${i}"]`).value};});
-        const errors=M.validateSetup(setup);if(errors.length)throw new Error(errors.join(" "));
-        ROLES.forEach((r,i)=>{const who=setup.ours[r]?.who;if(who&&board.ours[i].d!=null)live[who]={...live[who],deaths:board.ours[i].d};});
-        for(const f of st.fed)setup.theirs[f.role]={...setup.theirs[f.role],fed:true};
-        previousScan={before:{setup:M.clone(S.setup),live:M.clone(S.live),board:M.clone(S.board)},after:{setup:M.clone(setup),live:M.clone(live),board:M.clone(board)}};
-        commit([{path:["setup"],value:setup},{path:["live"],value:live},{path:["board"],value:board}],reviewedVersion ?? true);el.hidden=true;
-        toast("Lobby snapshot applied. Build advice updated for your squad.");
-      }catch(e){toast(e.message);}
-    };
+        row.inventoryConfirmed=el.querySelector('[data-confirm-side="'+side+'"][data-confirm-row="'+i+'"]').checked;
+        row.inventoryComplete=row.inventoryConfirmed&&el.querySelector('[data-complete-side="'+side+'"][data-complete-row="'+i+'"]').checked;
+        if(side==="ours"){const v=el.querySelector('[data-current-gold="'+i+'"]').value;row.currentGold=v===""?null:Number(v);}
+      }
+      const clean=cleanBoard(board),whoRows=[...el.querySelectorAll("[data-player-row]")].map(x=>x.value);
+      savedScan(boardChanges(clean,whoRows),ticket,"scoreboard");el.hidden=true;
+      toast(room?"Snapshot saved locally; syncing strategy…":"Strategy updated.");
+    }catch(e){toast(e.message);}};
   }
+
   function renderCounterBuild() {
     optimizerUI.render();
     const el=$('#counterbuild');if(!el)return;
@@ -571,31 +690,48 @@
     const pr=A.patchReview,patchLabel={reviewed:'Reviewed','initial-baseline':'Initial baseline · review pending','review-required':'Review needed','source-incomplete':'Refresh incomplete'},changed=[...(pr?.changes?.items||[]),...(pr?.changes?.heroes||[])];
     el.innerHTML=`<div class="counter-toolbar"><div><p class="eyebrow">Whole lobby · personal response</p><p id="counter-age" class="note" role="status">${esc(ageText)}</p></div><button class="chip cta" id="counterbuild-scan" type="button">Scan scoreboard / builds</button></div><div class="counter-player-grid">${players||'<p class="empty-advice">Choose your heroes and player assignments in Plan, then confirm a scoreboard for item advice.</p>'}</div>${plan.threats.length?`<details data-section="threats"><summary>Why these responses · lobby threats</summary><ol class="lobby-threats">${plan.threats.map(t=>`<li><b>${esc(heroName(t.hero))}</b> · ${esc(roleName(t.role))}<p>${t.reasons.map(esc).join(' · ')||'Review the current item build.'}</p><div class="threat-items">${t.items.map(n=>`<span>${planningUI.icon(A.items.find(it=>it.name===n),28)}${esc(planningUI.itemName(n))}</span>`).join('')||'Inventory unconfirmed'}</div></li>`).join('')}</ol></details>`:''}<details class="patch-review" data-section="patch"><summary>Patch data · ${esc(patchLabel[pr?.status]||'Unavailable')}</summary><p>${changed.length} catalogue entries changed.</p>${/^https:\/\/(www\.)?predecessorgame\.com\//.test(pr?.officialNotesUrl||'')?`<a href="${esc(pr.officialNotesUrl)}" target="_blank" rel="noopener">Official patch notes</a>`:''}<p class="note">New mechanics require a rule review. The app does not automatically interpret patch-note prose.</p></details>${plan.warnings.length?`<details data-section="coverage" ${['stale','patch-review-required'].includes(plan.status)?'open':''}><summary>Advice coverage · ${plan.status==='patch-review-required'?'patch review needed':plan.status==='stale'?'rescan needed':'check evidence'}</summary>${plan.warnings.map(w=>`<p class="note">${esc(w)}</p>`).join('')}</details>`:''}`;
     el.querySelectorAll('details[data-section]').forEach(d=>{if(opened.has(d.dataset.section))d.open=true;});
-    el.querySelector('#counterbuild-scan').onclick=()=>$('#board-file').click();
+    el.querySelector('#counterbuild-scan').onclick=()=>$('#auto-photo-file').click();
     el.querySelectorAll('[data-review-build]').forEach(b=>b.onclick=()=>planningUI.open(b.dataset.reviewBuild));
     el.querySelectorAll('[data-choose-pivot]').forEach(b=>b.onclick=()=>{const choice=choices.get(b.dataset.choosePivot);if(choice)planningUI.select(choice.who,choice.rec);});
   }
-  async function openMap(file) {
+
+  async function openMap(file){
     if(clockSec()==null)return toast("Start the match clock before scanning a countdown.");
-    const observedAt=clockSec(),el=$("#map-review");el.hidden=false;
-    el.innerHTML='<h3>Scan a minimap countdown</h3><p>Drag a box tightly around one visible objective timer. Select its objective, check the readout, then apply.</p><canvas id="map-canvas"></canvas><label>Objective<select id="map-objective">'+OBJECTIVES.map(o=>`<option value="${o.key}">${o.label}</option>`).join("")+'</select></label><button class="chip" id="map-read">Read selected timer</button><label>Match time in screenshot<input id="map-observed" placeholder="m:ss" value="'+fmt(observedAt)+'"></label><label>Confirmed countdown<input id="map-time" placeholder="m:ss"></label><p id="map-message" role="status"></p><button class="chip cta" id="map-apply">Apply countdown</button><button class="chip" id="map-cancel">Cancel</button>';
-    const image=await createImageBitmap(file),c=$("#map-canvas");c.width=image.width;c.height=image.height;
-    const g=c.getContext("2d");let start=null,crop=null;
-    const draw=()=>{g.drawImage(image,0,0);if(crop){g.strokeStyle="#ffdc5e";g.lineWidth=Math.max(3,c.width/300);g.strokeRect(crop.x*c.width,crop.y*c.height,crop.w*c.width,crop.h*c.height);}};draw();
-    const point=e=>{const r=c.getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};};
-    c.onpointerdown=e=>{start=point(e);c.setPointerCapture(e.pointerId);};
-    c.onpointermove=e=>{if(!start)return;const end=point(e);crop={x:Math.min(start.x,end.x),y:Math.min(start.y,end.y),w:Math.abs(start.x-end.x),h:Math.abs(start.y-end.y)};draw();};
-    c.onpointerup=()=>start=null;c.onpointercancel=()=>start=null;
+    const ticket=scanTicket(file),observedAt=photoTime.gameTime(file,S.clock.startedAt),el=$("#map-review");el.hidden=false;
+    el.innerHTML='<h3>Read one objective timer</h3><p class="note">Drag a tight box around one countdown. Choose the objective it belongs to.</p><canvas id="map-canvas"></canvas><label>Objective<select id="map-objective"><option value="">Choose objective</option>'+OBJECTIVES.map(o=>'<option value="'+o.key+'">'+o.label+'</option>').join("")+'</select></label><button class="chip" id="map-read">Read timer</button><label>Game time in photo<input id="map-observed" placeholder="m:ss" value="'+fmt(observedAt)+'"></label><label>Countdown<input id="map-time" placeholder="m:ss"></label><p id="map-message" role="status"></p><div class="review-footer"><button class="chip cta" id="map-apply">Apply timer</button><button class="chip" id="map-cancel">Cancel</button></div>';
+    const image=await createImageBitmap(file);if(!el.isConnected||!currentScan(ticket)){image.close();el.hidden=true;return;}
+    const canvas=$("#map-canvas");canvas.width=image.width;canvas.height=image.height;const g=canvas.getContext("2d");
+    let start=null,crop=null,revision=0,closed=false,prior=null,objective="";
+    const close=()=>{if(closed)return;closed=true;revision++;image.close();el.hidden=true;};
+    const draw=()=>{g.drawImage(image,0,0);if(crop){g.strokeStyle="#ffdc5e";g.lineWidth=Math.max(3,canvas.width/300);g.strokeRect(crop.x*canvas.width,crop.y*canvas.height,crop.w*canvas.width,crop.h*canvas.height);}};draw();
+    const point=e=>{const r=canvas.getBoundingClientRect();return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};};
+    canvas.onpointerdown=e=>{start=point(e);revision++;$("#map-time").value="";canvas.setPointerCapture(e.pointerId);};
+    canvas.onpointermove=e=>{if(!start)return;const end=point(e);crop={x:Math.min(start.x,end.x),y:Math.min(start.y,end.y),w:Math.abs(start.x-end.x),h:Math.abs(start.y-end.y)};draw();};
+    canvas.onpointerup=canvas.onpointercancel=()=>start=null;
+    $("#map-objective").onchange=e=>{revision++;objective=e.target.value;prior=JSON.stringify(S.objectives[objective]??null);$("#map-time").value="";};
+    const apply=()=>{
+      requireScan(ticket);if(!objective)throw new Error("Choose the objective shown in this crop.");
+      if(JSON.stringify(S.objectives[objective]??null)!==prior)throw new Error("This objective changed. Review the latest timer first.");
+      const seconds=M.parseTime($("#map-time").value),observation=M.parseTime($("#map-observed").value);
+      if(seconds==null||seconds>1200)throw new Error("Enter a countdown from 0:00 to 20:00.");
+      if(observation==null||observation>clockSec()+10)throw new Error("Check the game time shown in the photo.");
+      const event=M.objectiveEvent("countdown",observation,seconds,"minimap photo",me);event.previous=S.objectives[objective]??null;
+      savedScan([{path:["objectives",objective],value:event}],ticket,"minimap");close();toast("Objective timer updated.");
+    };
     $("#map-read").onclick=()=>exclusiveScan(async()=>{
-      if(!crop?.w||!crop?.h)return toast("Drag a box around the countdown first.");
+      if(!crop?.w||!crop?.h)return toast("Drag a box around one countdown first.");
+      if(!objective)return toast("Choose its objective first.");
+      requireScan(ticket);const token=revision,selected=objective;
       $("#map-message").textContent="Reading timer on this device…";
-      const hits=await window.MinimapScan.scan(file,crop);
+      const hits=await window.MinimapScan.scan(file,{...crop});
+      if(closed||token!==revision||selected!==objective||!currentScan(ticket))return;
       $("#map-time").value=hits.length===1&&!hits[0].estimated?hits[0].text:"";
-      $("#map-message").textContent=hits.length===1&&hits[0].estimated?`The game shows ${hits[0].text} (at least ${Math.floor(hits[0].minSeconds/60)} minutes). Wait for an exact countdown or enter one you can verify.`:hits.length===1?`Read ${hits[0].text}. Verify against the image before applying.`:hits.length?"Multiple times found. Tighten the crop or enter the visible countdown.":"No clear countdown found. Enter the visible countdown or try a tighter crop.";
+      if(hits.autoRead){$("#map-time").value=hits.autoRead.text;try{apply();}catch(e){toast(e.message);}return;}
+      $("#map-message").textContent=hits.length===1&&hits[0].estimated?"This is an approximate "+hits[0].text+" timer. Wait for an exact countdown.":hits.length===1?"Check "+hits[0].text+" against the photo and apply.":hits.length?"Multiple timers found. Tighten the crop.":"No clear timer found. Enter a verified countdown.";
     });
-    $("#map-cancel").onclick=()=>{image.close();el.hidden=true;};
-    $("#map-apply").onclick=()=>{const seconds=M.parseTime($("#map-time").value);if(seconds==null||seconds>1200)return toast("Enter a valid countdown from 0:00 to 20:00.");const observation=M.parseTime($("#map-observed").value);if(observation==null||observation>clockSec()+10)return toast("Check the match time shown in your screenshot.");recordObjective($("#map-objective").value,"countdown",seconds,"confirmed minimap scan",observation);image.close();el.hidden=true;};
+    $("#map-cancel").onclick=close;$("#map-apply").onclick=()=>{try{apply();}catch(e){toast(e.message);}};
   }
+
   function renderPostmatch() {
     const el=$("#postmatch");el.hidden=S.stage!=="finished";if(el.hidden)return;
     const selected=Object.values(S.setup.ours).map(p=>p.who).filter(Boolean);
@@ -612,18 +748,20 @@
     meSel.innerHTML = `<option value="">Who are you?</option>` + A.squad.players.map(p => `<option value="${esc(p.key)}" ${p.key === me ? "selected" : ""}>${esc(p.label)}</option>`).join("");
     meSel.onchange = () => { me = meSel.value; store.set("squad-me", me); if (room) room.channel.track({ who: me || "guest", at: Date.now() }); render(); };
     $("#quick-scan").onclick=()=>{window.__showTab("match");$("#camera-open").click();};
-    $("#camera-open").onclick = () => {
+    $("#camera-open").onclick=()=>{
       if(scanBusy)return toast("Wait for the current scan to finish.");
-      window.CameraScan.open("loading",(kind,canvas)=>{
-        if(kind==="minimap" || kind==="hud") { canvas.toBlob(blob=>{if(blob)openMap(blob);},"image/png"); }
-        else exclusiveScan(()=>kind==="loading"?runScan(canvas):runBoardScan(canvas));
+      window.CameraScan.open("auto",(kind,canvas)=>{
+        if(kind==="upload")return $("#auto-photo-file").click();
+        scanTicket(canvas);matchFocus?.reading();runAutoPhoto(canvas,kind==="auto"?null:kind);
       },toast);
     };
-    $("#wake").onchange = e => e.target.checked ? wake.enable() : wake.disable();
-    $("#scan-file").onchange = e => { const f = e.target.files?.[0]; if (f) preparePhoto(f,runScan); e.target.value = ""; };
-    $("#board-file").onchange = e => { const f = e.target.files?.[0]; if (f) preparePhoto(f,runBoardScan); e.target.value = ""; };
-    $("#map-file").onchange = e => { const f=e.target.files?.[0]; if(f) openMap(f); e.target.value=""; };
-    $("#match-clear").onclick = () => { if(!confirm("Clear this match for everyone in the room?"))return; replaceState(blank()); previousScan=null; toast("Match cleared"); };
+    $("#wake").onchange=e=>e.target.checked?wake.enable():wake.disable();
+    for(const id of ["auto-photo-file","scan-file","board-file","map-file"]){$("#"+id).onchange=e=>{const file=e.target.files?.[0];if(file){scanTicket(file);matchFocus?.reading();runAutoPhoto(file);}e.target.value="";};}
+    $("#match-clear").onclick=()=>{
+      if(!confirm("Clear this match for everyone in the room?"))return;
+      scanAnnouncements.clear();lastBoardRead=null;previousScan=null;$("#scan-review").hidden=true;$("#map-review").hidden=true;hideScanProgress();replaceState(blank());toast("Match cleared");
+    };
+    matchFocus=window.SquadMatchFocus.create({app:A,getState:()=>S,getMe:()=>me,planningUI,toast,onScan:()=>$("#camera-open").click()});window.__matchFocus=matchFocus;
     renderWake(); renderRoom(); render();
     const q = new URLSearchParams(location.search).get("room") || store.get("squad-room", null);
     if (q && !window.SquadHandoff?.pending) joinRoom(q, false);
@@ -631,7 +769,7 @@
     clearInterval(tick); tick = setInterval(() => {
       if(document.visibilityState !== "visible") return;
       if(S.board && Math.floor(Date.now()/1000)%15===0)renderCounterBuild();
-      if(S.clock?.startedAt) { renderLive(); renderObjectives(); if(Math.floor(clockSec())%15===0){renderStrategy();renderBoard();} }
+      matchFocus?.render();if(S.clock?.startedAt) { renderLive(); renderObjectives(); if(Math.floor(clockSec())%15===0){renderStrategy();renderBoard();} }
     },1000);
     document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") { render(); refreshRoom().then(flush); } });
     document.addEventListener("squad:plan", consumePlan);

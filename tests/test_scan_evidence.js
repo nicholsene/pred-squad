@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),s={};vm.createContext(s);for(const f of ['scan.js','scoreboard.js'])vm.runInContext(fs.readFileSync(__dirname+'/../docs/'+f,'utf8'),s);
+const K=s.ScanKit,B=s.ScoreboardScan;
+const hits=K.findHeroes([[{t:'8',c:5,x0:0,x1:20,y0:0,y1:20},{t:'SKYLAR',c:95,x0:100,x1:200,y0:0,y1:20}]],[{key:'SKYLAR',slug:'skylar'}],1);
+assert(hits.length&&hits.every(h=>h.x0===100&&h.c===.95));
+assert.equal(B._parseGold('114'),null);assert.equal(B._parseGold('0'),null);assert.equal(B._parseGold('14,457g'),14457);assert.equal(B._parseCount('0'),0);assert.equal(B._parseCount('114'),114);
+const rows=Array.from({length:10},(_,i)=>({slug:'h'+i,c:.99,s:1,x0:i<5?300:1200,x:i<5?350:1250,y:200+(i%5)*100,ambiguous:false}));
+let g=B._heroGeometry(rows,2000,1000);assert(g&&g.confidence.resolved);
+g=B._heroGeometry(rows.filter((_,i)=>i!==1&&i!==8),2000,1000);assert(g&&!g.confidence.resolved);assert.equal(g.rows.L[1].slug,null);assert(g.rows.L[1].inferred);
+g=B._heroGeometry(rows.map(r=>({...r,c:.12})),2000,1000);assert(g&&!g.confidence.resolved);
+assert.equal(B._heroGeometry(rows.filter((_,i)=>i%5<2),2000,1000),null);
+console.log('ok: hero-only bounding boxes, numeric confidence, CS/gold separation, measured review grids and unresolved holes');

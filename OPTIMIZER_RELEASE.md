@@ -31,3 +31,19 @@ Independent models reviewed legality, chronology, complementarity, identity and 
 ## Next depth
 
 This release optimizes the next item direction against current evidence. Full six-item sequence optimization, explicit sell/swap simulation, verified proc/stacking formulas, time-to-purchase modeling and prospective outcome evaluation remain separate future work. Keep the current limits visible rather than implying global optimality.
+
+## Requested quick-start flow
+
+The Match setup card is Recommended build. Five lane buttons select the player's lane while preserving player/hero pairs. Scan scoreboard & builds and Build manually are toggle modes. Mark ready is removed from the flow. Start game moves directly to live tracking and uses the current game time; a reviewed screenshot clock advances by its observed age. The live clock and objective controls then remain available. Legacy ready sessions still open correctly.
+
+## Compact match and automatic photo intake
+
+Core Match fits320×640,390×844 and844×390 with Reset, identity, Strategy/Timers/Squad, five lane meters, a single Scan action and explicit Read update. Detailed evidence and equipment review open targeted sheets. Own lane has a gold border; measured positive/negative gaps are green/red, unknown gaps neutral. The meter is a heuristic summary of known level, farm and genuine earned-gold differences, not a win probability.
+
+One intake identifies loading, scoreboard, shop/build and HUD/minimap. Upload observations default to ten seconds before selection; camera captures retain their true time through correction. Per-field OCR/template evidence, geometry, exact squad identity and layout must all meet90 for automatic numeric application. This is read strength, not calibrated correctness probability. Equipment stays unconfirmed unless every slot is resolved; unknown blanks never imply empty slots. Shop recommendation names are reviewed planning candidates, not owned equipment; discounted shop prices do not replace catalogue costs.
+
+Accepted photos switch to Strategy and can speak a concise update. Shared-room speech waits for the exact server-acknowledged state; rejected, superseded or pending observations are not announced as accepted. Clock/stage/identity/room changes invalidate in-flight reads. Older scoreboards cannot replace newer ones. A single selected exact90-strength minimap countdown may apply automatically; repeated timers, bare seconds and2m+ estimates require review.
+
+The camera uses a horizontal16:9 guide for game screens with portrait rotation guidance and an upload fallback. Unread angled scoreboards offer four-corner correction. Private benchmarks identified shop, portrait minimap and spectator HUD; the reversed loading layout follows visible labels. Straightening the13:29 example recovered all ten heroes, while several numbers remained uncertain and correctly required review. The supplied photos are not committed or sent to a remote OCR service.
+
+Browser checks cover no core scrolling at all three viewports, review paging, ten-second age, automatic numeric updates with unknown inventory, reset/clock changes during OCR, intended-build routing and server-ACK/conflict speech behavior.

@@ -38,3 +38,16 @@ assert.throws(()=>M.validateBoard(validBoard));
 console.log("ok: snapshot session, future age, canonical items and spendable gold validation");
 
 assert.notEqual(M.blank().id,M.blank().id,"Clearing a match must invalidate old in-flight scans");
+
+const originalSetup=M.clone(s.setup),changedLane=M.chooseLane(s.setup,"a","CARRY");
+assert.equal(changedLane.ours.CARRY.who,"a");assert.equal(changedLane.ours.CARRY.hero,"gideon");
+assert.equal(changedLane.ours.MIDLANE.who,"b");assert.equal(changedLane.ours.MIDLANE.hero,"sparrow");
+assert.deepEqual(s.setup,originalSetup,"lane selection cannot mutate the source session");
+assert.throws(()=>M.chooseLane(s.setup,"a","NOT_A_ROLE"));
+const firstLane=M.chooseLane(M.blank().setup,"new","JUNGLE");assert.equal(firstLane.ours.JUNGLE.who,"new");
+console.log("ok: quick lane selection preserves players and heroes without duplicates");
+
+assert.equal(M.observedGameTime({sessionId:"current",at:1000,clock:80},"current",4000),83);
+assert.equal(M.observedGameTime({sessionId:"old",at:1000,clock:80},"current",4000),null);
+assert.equal(M.observedGameTime({sessionId:"current",at:5000,clock:80},"current",4000),null);
+console.log("ok: observed game clock ages forward and rejects other-match/future observations");

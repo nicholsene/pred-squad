@@ -31,8 +31,13 @@ jobs:
       - run: node tests/test_profiles.js
       - run: node tests/test_mechanics.js
       - run: node tests/test_optimizer.js
+      - run: node tests/test_photo_time.js
+      - run: node tests/test_photo_router.js
+      - run: node tests/test_scan_quality.js
+      - run: node tests/test_scan_evidence.js
       - run: |
           for file in docs/*.js; do node --check "$file"; done
       - run: npm install --no-save --package-lock=false playwright@1.62.1
       - run: npx playwright install --with-deps chromium
       - run: node tests/test_browser.cjs
+      - run: node tests/test_scan_flow.cjs

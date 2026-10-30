@@ -39,6 +39,26 @@
     const issues = validateSetup(s.setup); if (issues.length) throw new Error(issues.join(" "));
     return s;
   }
+  function observedGameTime(board, sessionId, now) {
+    if(!board||board.sessionId!==sessionId||!Number.isFinite(board.at)||board.at>now||
+       !Number.isFinite(board.clock)||board.clock<0)return null;
+    return board.clock+Math.floor((now-board.at)/1000);
+  }
+  function chooseLane(setup, who, role) {
+    if(!ROLES.includes(role)||typeof who!=="string"||!who)throw new Error("Choose your identity and a valid lane.");
+    const next=clone(setup);next.ours ||= {};
+    const old=ROLES.find(r=>next.ours[r]?.who===who);
+    if(old===role)return next;
+    if(old){const player=next.ours[old];next.ours[old]=next.ours[role]||{who:"",hero:""};next.ours[role]=player;}
+    else {
+      const displaced=next.ours[role];
+      if(displaced?.who){const free=ROLES.find(r=>r!==role&&!next.ours[r]?.who&&!next.ours[r]?.hero);if(!free)throw new Error("Review the occupied lineup before choosing this lane.");next.ours[free]=displaced;next.ours[role]={who,hero:""};}
+      else next.ours[role]={...(displaced||{}),who};
+    }
+    const issues=validateSetup(next).filter(s=>!s.startsWith("Choose a hero"));
+    if(issues.length)throw new Error(issues.join(" "));
+    return next;
+  }
   function start(s, me, at) {
     const issues = validateSetup(s.setup);
     if (!me || !Object.values(s.setup.ours).some(p => p.who === me)) issues.push("Choose who you are in this lineup.");
@@ -65,7 +85,7 @@
     return { kind, at, respawnAt: kind !== "available" && Number.isFinite(delay) ? at + delay : null, source, who, confirmed: true };
   }
   function validateBoard(board, context = {}) {
-    const limits = { lvl: [1,18], k: [0,60], d: [0,60], a: [0,100], gold: [0,99999] };
+    const limits = { lvl: [1,18], k: [0,60], d: [0,60], a: [0,100], gold: [0,99999], cs: [0,1000] };
     for (const side of ["ours", "theirs"]) {
       if (board?.[side]?.length !== 5) throw new Error("Both teams need five scoreboard rows.");
       for (const row of board[side]) for (const [key, [lo, hi]] of Object.entries(limits)) {
@@ -85,7 +105,7 @@
     }
     return board;
   }
-  const api = { ROLES, clone, blank, normalize, validateSetup, fromPlan, start, parseTime, objectiveStatus, objectiveEvent, validateBoard };
+  const api = { ROLES, clone, blank, normalize, validateSetup, fromPlan, observedGameTime, chooseLane, start, parseTime, objectiveStatus, objectiveEvent, validateBoard };
   root.SquadSession = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
