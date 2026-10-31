@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),E=require('../docs/engine.js');
+const match=(id,n,members,mode='RANKED')=>({id,start:new Date(Date.UTC(2026,0,1,0,n)).toISOString(),mode,players:members.map(([squad,team='DAWN'])=>({squad,team}))});
+const solo=Array.from({length:25},(_,i)=>match('solo-'+i,100+i,[['a']])),pair=Array.from({length:15},(_,i)=>match('pair-'+i,i,[['b'],['c']]));
+const triple=match('triple',20,[['a'],['b'],['c']]),opposed=match('opposed',150,[['b'],['c','DUSK']]),all=[...solo,...pair,triple,opposed];
+assert.equal(E.historyMatches(all,['a'],'last10').length,10);
+assert.deepEqual(E.historyMatches(all,['b','c'],'last10').map(m=>m.id),['triple',...pair.slice(-9).reverse().map(m=>m.id)]);
+assert.equal(E.historyMatches(all,['b'],'last10')[0].id,'opposed','a personal match counts even when a squadmate is on the other team');
+assert(!E.historyMatches(all,['b','c'],'last20').includes(opposed),'opposing teams are not games together');
+assert.equal(E.historyMatches(all,['b','c'],'last20').length,16);
+assert.equal(E.historyMatches(all,['a','b','c'],'last10').length,1);
+assert.equal(E.historyMatches(all,['absent'],'last10').length,0);
+assert.equal(E.historyMatches(all,['b','c'],'all').length,16);
+assert.equal(all[0],solo[0],'input order is not mutated');
+console.log('ok: personal and same-team squad history windows are independent of other players recent games');

@@ -68,6 +68,16 @@
     return out;
   }
 
+  /** Select a player's games or same-team squad games before taking a recent window. */
+  function historyMatches(matches, selected, period = "all") {
+    const members = [...new Set(selected || [])];
+    const relevant = !members.length ? matches : members.length === 1
+      ? matches.filter(m => m.players.some(p => p.squad === members[0]))
+      : togetherMatches(matches, members, false).map(g => g.match);
+    const sorted = relevant.slice().sort((a, b) => String(b.start).localeCompare(String(a.start)));
+    return /^last(10|20)$/.test(period) ? sorted.slice(0, Number(period.slice(4))) : sorted;
+  }
+
   // ---------------- stats ----------------
   function summarize(rows, targets) {
     const t = Object.assign({ maxDeaths: 4, minWards: 4, minObjectiveDamage: 1 }, targets || {});
@@ -510,7 +520,7 @@
   const api = {
     LEAD_WEIGHTS,laneLead,liveStrategy,strategyObjective,
     ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE, boardState,
-    shrink, squadRows, togetherMatches, summarize, comboReport, record,
+    shrink, squadRows, togetherMatches, historyMatches, summarize, comboReport, record,
     memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor, matchPlan,
     context(matches, heroes, meta) { return { matches, heroes, meta, rows: squadRows(matches) }; },
   };

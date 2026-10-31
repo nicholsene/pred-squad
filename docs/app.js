@@ -46,12 +46,21 @@
   const allMatches = matchesF.matches || [];
   // Ranked-only filter (per device). Everything downstream reads `matches` / `ctx`.
   let rankedOnly = (() => { try { return localStorage.getItem("squad-ranked") === "1"; } catch { return false; } })();
-  let matches, ctx;
+  const saved = (() => { try { return JSON.parse(localStorage.getItem("squad-sel") || "null"); } catch { return null; } })();
+  const state = {
+    selected: new Set(saved && saved.length ? saved.filter(k => squad.players.some(p => p.key === k)) : squad.players.map(p => p.key)),
+    scope: "group",
+    controls: (() => { try { return localStorage.getItem("squad-controls") === "pc" ? "pc" : "ps5"; } catch { return "ps5"; } })(),
+  };
+  if (!state.selected.size) squad.players.forEach(p => state.selected.add(p.key));
+  const persist = () => { try { localStorage.setItem("squad-sel", JSON.stringify([...state.selected])); } catch {} };
+  const sel = () => [...state.selected].sort();
+  let eligibleMatches, matches, ctx;
   let historyFilter = "all";
   const applyMode = () => {
-    matches = rankedOnly ? allMatches.filter(m => m.mode === "RANKED") : allMatches;
-    if (historyFilter === "patch") matches = matches.filter(m => String(m.patch).split(".").slice(0,2).join(".") === String(heroesF.patch).split(".").slice(0,2).join("."));
-    if (/^last/.test(historyFilter)) matches = matches.slice().sort((a,b) => String(b.start).localeCompare(String(a.start))).slice(0, Number(historyFilter.slice(4)));
+    eligibleMatches = rankedOnly ? allMatches.filter(m => m.mode === "RANKED") : allMatches;
+    if (historyFilter === "patch") eligibleMatches = eligibleMatches.filter(m => String(m.patch).split(".").slice(0,2).join(".") === String(heroesF.patch).split(".").slice(0,2).join("."));
+    matches = /^last/.test(historyFilter) ? E.historyMatches(eligibleMatches, sel(), historyFilter) : eligibleMatches;
     ctx = E.context(matches, heroes, meta);
   };
   applyMode();
@@ -77,7 +86,7 @@
   const history = document.createElement("select"); history.setAttribute("aria-label", "History period");
   history.innerHTML = '<option value="all">All history</option><option value="last10">Last 10 matches</option><option value="last20">Last 20 matches</option><option value="patch">Current patch</option>';
   document.querySelector(".status-row").append(history);
-  history.onchange = () => { historyFilter = history.value; applyMode(); window.__app.ctx = ctx; render(); window.__matchRender?.(); };
+  history.onchange = () => { historyFilter = history.value; applyMode(); showStatus(); window.__app.ctx = ctx; render(); window.__matchRender?.(); };
   const modeSw = $("#mode-switch");
   const paintMode = () => modeSw.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", (b.dataset.mode === "ranked") === rankedOnly));
   paintMode();
@@ -91,17 +100,6 @@
     st.textContent += " · " + ((status && status.errors && status.errors[0]) || "No match history yet — skill orders still work");
   }
 
-  // ---------- state ----------
-  const saved = (() => { try { return JSON.parse(localStorage.getItem("squad-sel") || "null"); } catch { return null; } })();
-  const state = {
-    selected: new Set(saved && saved.length ? saved.filter(k => squad.players.some(p => p.key === k)) : squad.players.map(p => p.key)),
-    scope: "group",
-    controls: (() => { try { return localStorage.getItem("squad-controls") === "pc" ? "pc" : "ps5"; } catch { return "ps5"; } })(),
-  };
-  if (!state.selected.size) squad.players.forEach(p => state.selected.add(p.key));
-  const persist = () => { try { localStorage.setItem("squad-sel", JSON.stringify([...state.selected])); } catch {} };
-  const sel = () => [...state.selected].sort();
-
   // ---------- picker ----------
   const picker = $("#picker");
   for (const p of squad.players) {
@@ -112,7 +110,7 @@
       if (state.selected.has(p.key) && state.selected.size === 1) { b.animate([{ transform: "translateX(-3px)" }, { transform: "translateX(3px)" }, { transform: "none" }], { duration: 220 }); return; }
       state.selected.has(p.key) ? state.selected.delete(p.key) : state.selected.add(p.key);
       b.setAttribute("aria-pressed", state.selected.has(p.key));
-      persist(); render();
+      persist(); applyMode(); showStatus(); window.__app.ctx = ctx; render(); window.__matchRender?.();
     };
     picker.appendChild(b);
   }
@@ -133,6 +131,7 @@
   });
 
   // ---------- 1: record ----------
+  const personalMatches = m => E.historyMatches(eligibleMatches, [m], historyFilter);
   function groupRows() {
     const s = sel();
     const tm = E.togetherMatches(matches, s, false).map(x => x.match);
@@ -141,7 +140,7 @@
 
   // one player selected: Record becomes that player's full profile
   function renderSolo(m) {
-    const rows = ctx.rows.filter(r => r.member === m).sort((a, b) => String(b.start).localeCompare(String(a.start)));
+    const rows = E.squadRows(personalMatches(m)).filter(r => r.member === m).sort((a, b) => String(b.start).localeCompare(String(a.start)));
     const all = E.record(rows);
     $("#rec-h").innerHTML = `<span class="step">1</span>${esc(label(m))}'s record`;
     if (!all.games) { $("#record").innerHTML = `<p class="muted">No games for ${esc(label(m))} yet.</p>`; return; }
@@ -206,8 +205,8 @@
   // ---------- 2: stats ----------
   function renderStats() {
     const s = sel();
-    const base = state.scope === "group" ? groupRows() : ctx.rows;
-    $("#stats").innerHTML = s.map(m => statTile(m, base.filter(r => r.member === m))).join("");
+    const base = state.scope === "group" ? groupRows() : null;
+    $("#stats").innerHTML = s.map(m => statTile(m, (base || E.squadRows(personalMatches(m))).filter(r => r.member === m))).join("");
     renderItemLab();
     renderProgress();
   }
@@ -215,7 +214,7 @@
   function renderProgress() {
     const el = $("#progress"); if (!el) return;
     el.innerHTML = '<h3 class="sub">Recent progress</h3><div class="grid">' + sel().map(m => {
-      const p = window.SquadInsights.progress(matches, m, T);
+      const p = window.SquadInsights.progress(personalMatches(m), m, T);
       return `<div class="tile"><h3>${esc(label(m))}</h3><p>${p.games} recent games · ${pct(p.wr)} wins</p><p>${esc(p.focus)}</p><p class="note">Wards / 10 min: ${num(p.wards10)} · Deaths / 10 min: ${num(p.deaths10)}${p.previousWr == null ? "" : ` · Previous ${p.previousGames}: ${pct(p.previousWr)} wins`}</p></div>`;
     }).join("") + '</div>';
   }
@@ -228,7 +227,7 @@
     const itemName = n => (L.C[n] || {}).label || n;
     const rec = x => `${x.wins}–${x.games - x.wins}`;
     const members = s.map(m => {
-      const r = IL.memberItems(L, matches, m);
+      const r = IL.memberItems(L, state.scope === "group" ? matches : personalMatches(m), m);
       if (!r.games) return "";
       const up = r.items.filter(x => x.lift > 0.03).slice(0, 4), down = r.items.filter(x => x.lift < -0.03).slice(-4).reverse();
       const pill = (x, cls) => `<span class="pill ${cls}" title="${x.games} games">${esc(x.label)} <b>${rec(x)}</b></span>`;
