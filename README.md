@@ -1,4 +1,4 @@
-> Match planning improvements and verification: see [RELEASE.md](RELEASE.md).
+> Plans, priorities and status: see [PLAN.md](PLAN.md). Earlier release notes: [plans/archive/](plans/archive/).
 
 # Squad Planner (Predecessor)
 
