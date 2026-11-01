@@ -12,7 +12,7 @@
     try { const r = await fetch(`data/${name}?v=${Date.now()}`); if (!r.ok) throw 0; return await r.json(); }
     catch { return fallback; }
   }
-  const [squad, heroesF, matchesF, meta, status, itemsF, itemTemplates, patchReview] = await Promise.all([
+  const [squad, heroesF, matchesF, meta, status, itemsF, itemTemplates, patchReview, ranksF] = await Promise.all([
     load("squad.json", { players: [], targets: {} }),
     load("heroes.json", { heroes: [] }),
     load("matches.json", { matches: [] }),
@@ -21,6 +21,7 @@
     load("items.json", { items: [] }),
     load("item-templates.json", { templates: [] }),
     load("patch-review.json", {status:"source-incomplete"}),
+    load("ranks.json", { ranks: [] }),
   ]);
   if(patchReview.patches?.heroes!==heroesF.patch||patchReview.patches?.items!==itemsF.patch){
     Object.assign(patchReview,{status:"source-incomplete",sourceProblems:[...(patchReview.sourceProblems||[]),"Patch review does not match the loaded hero and item catalogues."]});
@@ -138,6 +139,68 @@
     return E.squadRows(tm).filter(r => s.includes(r.member) && s.every(m => r.together.includes(m)));
   }
 
+  // ---------- lobby difficulty (ranked games) ----------
+  const LADDER = ranksF.ranks || [];
+  const rankTxt = p => p == null ? "—" : `${esc(E.rankOf(p, LADDER) || "?")} <span class="muted">${Math.round(p)} pts</span>`;
+  const subsets = list => list.reduce((acc, x) => acc.concat(acc.map(s => s.concat(x))), [[]]).filter(s => s.length).sort((a, b) => a.length - b.length);
+  const sameGroup = (r, g) => r.together.length === g.length && g.every(m => r.together.includes(m));
+  const shortRank = n => String(n).replace("Bronze", "Br").replace("Silver", "Si").replace("Gold", "Go").replace("Platinum", "Pl").replace("Diamond", "Di").replace("Paragon", "Pa");
+
+  function lobbyChart(L) {
+    const games = L.last.slice().reverse();                    // oldest -> newest
+    if (!games.length) return "";
+    const W = 300, H = 120, pad = { l: 34, r: 4, t: 8, b: 18 };
+    const top = Math.max(100, Math.ceil(Math.max(...games.map(g => g.opp)) / 100) * 100);
+    const y = v => pad.t + (H - pad.t - pad.b) * (1 - v / top);
+    const bw = (W - pad.l - pad.r) / games.length, gap = 2;
+    const grid = []; for (let v = 0; v <= top; v += 100) grid.push(v);
+    const tick = v => { const r = LADDER.find(k => k.min === v); return r ? shortRank(r.name) : v; };
+    const bars = games.map((g, i) => {
+      const x = pad.l + i * bw + gap / 2, h = Math.max(2, y(0) - y(g.opp)), w = bw - gap;
+      const tip = `${g.win ? "Win" : "Loss"} · ${String(g.start).slice(5, 10)} · opponents avg ${E.rankOf(g.opp, LADDER) || ""} (${Math.round(g.opp)} pts)${g.team != null ? ` · your side ${Math.round(g.team)}` : ""}`;
+      return `<g class="lb-bar" data-tip="${esc(tip)}" tabindex="0"><rect x="${x - gap / 2}" y="${pad.t}" width="${bw}" height="${H - pad.t - pad.b + 14}" fill="transparent"/>
+        <path d="M${x},${y(0)} V${y(0) - h + 4} q0,-4 4,-4 h${Math.max(0, w - 8)} q4,0 4,4 V${y(0)} Z" class="${g.win ? "lb-w" : "lb-l"}"/>
+        <text x="${x + w / 2}" y="${H - 4}" text-anchor="middle" class="lb-wl">${g.win ? "W" : "L"}</text><title>${esc(tip)}</title></g>`;
+    }).join("");
+    return `<svg class="lb-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Average opponent rank points in the last ${games.length} ranked games, oldest to newest">
+      ${grid.map(v => `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}" class="lb-grid"/><text x="${pad.l - 4}" y="${y(v) + 3}" text-anchor="end" class="lb-ax">${esc(tick(v))}</text>`).join("")}
+      ${bars}</svg><div class="lb-tip muted" aria-live="polite">Tap a bar for that game.</div>`;
+  }
+
+  function lobbyBlock(rows, title, groups, groupSource = rows) {
+    const L = E.lobby(rows);
+    if (!L.games) return `<h3 class="sub">Lobby difficulty</h3><p class="muted">No ranked games in this view — rank points only exist for ranked matches.</p>`;
+    const t = L.trend;
+    const trend = t == null ? "" : Math.abs(t) < 15 ? `Lobbies are steady lately (last 5 vs the 5 before: ${t >= 0 ? "+" : "−"}${Math.abs(Math.round(t))} pts).`
+      : `Lobbies are getting <b>${t > 0 ? "harder" : "easier"}</b>: the last 5 averaged ${Math.abs(Math.round(t))} pts ${t > 0 ? "higher" : "lower"} than the 5 before.`;
+    const lastRec = { wins: L.last.filter(g => g.win).length, games: L.last.length };
+    let html = `<h3 class="sub">Lobby difficulty · ranked</h3>
+      <div class="tile lobby">
+        <div class="kv">
+          <span>Avg opponent</span><span>${rankTxt(L.opp)}</span>
+          <span>Avg on your side</span><span>${rankTxt(L.team)}</span>
+          <span>Opponents in wins</span><span>${rankTxt(L.oppInWins)}</span>
+          <span>Opponents in losses</span><span>${rankTxt(L.oppInLosses)}</span>
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:6px">${L.games} ranked game${L.games === 1 ? "" : "s"} (${L.wins}–${L.losses}) ${esc(title)}.</div>
+        <div class="sub-h">Last ${L.last.length} ranked games · ${lastRec.wins}–${lastRec.games - lastRec.wins}</div>
+        ${lobbyChart(L)}
+        ${trend ? `<p class="note" style="margin:6px 0 0">${trend}</p>` : ""}
+      </div>`;
+    if (groups && groups.length > 1) {
+      const list = groups.map(([name, f]) => [name, E.lobby(groupSource.filter(f))]).filter(([, x]) => x.games);
+      if (list.length) html += `<div class="scroll"><table class="fit"><thead><tr><th>Party</th><th class="num">Ranked</th><th>Avg opponent</th></tr></thead><tbody>${list.map(([n, x]) =>
+        `<tr><td><b>${esc(n)}</b></td><td class="num">${x.wins}–${x.losses}</td><td>${rankTxt(x.opp)}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    return html;
+  }
+  function wireLobby(root) {
+    root.querySelectorAll(".lb-bar").forEach(b => {
+      const show = () => { const t = b.closest(".tile").querySelector(".lb-tip"); if (t) t.textContent = b.dataset.tip; root.querySelectorAll(".lb-bar.on").forEach(x => x.classList.remove("on")); b.classList.add("on"); };
+      b.addEventListener("click", show); b.addEventListener("mouseenter", show); b.addEventListener("focus", show);
+    });
+  }
+
   // one player selected: Record becomes that player's full profile
   function renderSolo(m) {
     const rows = E.squadRows(personalMatches(m)).filter(r => r.member === m).sort((a, b) => String(b.start).localeCompare(String(a.start)));
@@ -164,10 +227,12 @@
         <div class="muted" style="font-size:12px;margin-top:6px">${all.games} game${all.games === 1 ? "" : "s"} · last ${recent.length}: ${recent.map(r => `<b class="${r.win ? "good" : "bad"}">${r.win ? "W" : "L"}</b>`).join(" ")}</div></div>
     </div>`;
     html += `<div class="grid">${statTile(m, rows)}</div>`;
+    html += lobbyBlock(rows, `for ${label(m)}`, groups);
     html += `<h3 class="sub">Who you played with</h3>` + tbl("Group", groups.map(([n, f]) => [n, E.record(rows.filter(f))]).filter(x => x[1].games));
     html += `<h3 class="sub">By lane</h3>` + tbl("Lane", byRole);
     html += `<h3 class="sub">By hero</h3>` + tbl("Hero", byHero);
     $("#record").innerHTML = html;
+    wireLobby($("#record"));
   }
 
   function renderRecord() {
@@ -197,7 +262,12 @@
       html += `</tbody></table></div>`;
       if (c.lineups.length > 6) html += `<button class="chip ghost" type="button" id="morelineups" style="margin-top:10px">Show all ${c.lineups.length} lineups</button>`;
     }
+    // difficulty: this group (with or without others), then each party made from the selected players
+    const mine = s.flatMap(m => E.squadRows(personalMatches(m)).filter(r => r.member === m));
+    const parties = subsets(s).map(g => [g.length === 1 ? `${label(g[0])} solo` : g.map(label).join(" + "), r => g.includes(r.member) && sameGroup(r, g)]);
+    html += lobbyBlock(rows, `with ${s.map(label).join(" + ")}`, parties, mine);
     $("#record").innerHTML = html;
+    wireLobby($("#record"));
     const more = $("#morelineups");
     if (more) more.onclick = () => { document.querySelectorAll("#record tbody.more").forEach(t => t.hidden = false); more.remove(); };
   }
@@ -274,6 +344,7 @@
         <span>Tower dmg</span><span>${num(x.towers, 0)}</span>
         <span>Unspent gold</span><span class="${x.unspent > 1500 ? "bad" : ""}">${num(x.unspent, 0)}</span>
         <span>CS / min</span><span>${num(x.csPerMin)}</span>
+        <span>Avg opponent</span><span>${(() => { const L = E.lobby(rows); return L.games ? `${rankTxt(L.opp)} <span class="muted">· ${L.games} ranked</span>` : '<span class="muted">no ranked games</span>'; })()}</span>
       </div>
       <div class="tags">${roles.map(([r, rec]) => `<span class="pill"><b>${esc(roleName(r))}</b> ${wl(rec)}</span>`).join("")}</div>
       <div>${hs.map(([h, rec]) => `<span class="pill">${esc(heroName(h))} ${wl(rec)}</span>`).join("")}</div>

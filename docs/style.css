@@ -553,3 +553,12 @@ body{padding-bottom:110px;line-height:1.5}.ambient{background:radial-gradient(el
 
 /* One-step match entry: lane, build input and the current game clock. */
 #clock[hidden]{display:none}.quick-lanes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:16px 0}.quick-lanes button{font:inherit;font-size:11px;min-height:48px;min-width:0;padding:6px 2px;white-space:normal;border:1px solid var(--edge);border-radius:13px;background:var(--paper);color:var(--muted);cursor:pointer}.quick-lanes button[aria-pressed=true]{background:var(--tint);color:var(--accent);border-color:var(--accent)}.quick-hero,.quick-game-time{display:grid;gap:6px;font-size:12px;color:var(--muted);margin:14px 0}.quick-hero select,.quick-game-time input{width:100%;min-width:0;min-height:44px;padding:10px 12px;font:inherit;font-size:16px;color:var(--ink);background:var(--paper);border:1px solid var(--edge);border-radius:12px}.quick-game-time input{max-width:150px;font-variant-numeric:tabular-nums}.intake-switch{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:18px;background:var(--tint);margin-top:18px}.intake-switch button{font:inherit;font-size:12px;line-height:1.35;min-width:0;min-height:52px;padding:8px;border-radius:14px;background:transparent;color:var(--muted);border:0;cursor:pointer}.intake-switch button[aria-pressed=true]{background:var(--paper);color:var(--accent)}.intake-panel .chip{width:100%;font-size:13px}.quick-build-items{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;list-style:none;padding:0;margin:16px 0}.quick-build-items li{display:flex;align-items:center;gap:8px;font-size:11px;min-width:0}.quick-build-items li span:last-child{overflow-wrap:anywhere}#lifecycle>#clock-start,.lifecycle-actions>#clock-start{width:100%;min-height:48px}.match-status>#lifecycle{min-width:0}
+.lb-chart { width: 100%; height: auto; display: block; margin-top: 4px; }
+.lb-grid { stroke: var(--edge); stroke-width: 1; }
+.lb-ax { font-size: 8px; fill: var(--muted); }
+.lb-wl { font-size: 8px; font-weight: 700; fill: var(--muted); }
+.lb-w { fill: var(--good); }
+.lb-l { fill: var(--bad); opacity: .85; }
+.lb-bar { cursor: pointer; outline: none; }
+.lb-bar.on path, .lb-bar:focus-visible path { stroke: var(--text, #fff); stroke-width: 1.5; }
+.lb-tip { font-size: 12px; min-height: 1.4em; margin-top: 2px; }

@@ -147,3 +147,24 @@ console.log("ok: regression scoring, draft locks and distinct heroes");
  assert(tracked.calls.some(c=>/Threat to track: Khaimera/.test(c)));
 }
 console.log('ok: unknown tracking stays unknown; observed zero reminders and supported threat tracking remain');
+
+// ---------- lobby difficulty (ranked rank points) ----------
+{
+  const ladder = [{ name: "Bronze III", min: 0, max: 100 }, { name: "Bronze II", min: 100, max: 200 }, { name: "Bronze I", min: 200, max: 300 }];
+  const P = (squad, team, rp) => ({ squad, team, rp, hero: "greystone", role: "OFFLANE", k: 1, d: 1, a: 1 });
+  const game = (id, start, win, opp, mine = 100) => ({ id, start, mode: "RANKED", winner: win ? "DAWN" : "DUSK",
+    players: [P("a", "DAWN", mine), P(null, "DAWN", mine), P(null, "DAWN", mine), P(null, "DUSK", opp), P(null, "DUSK", opp), P(null, "DUSK", opp)] });
+  const ms = [];
+  for (let i = 0; i < 10; i++) ms.push(game("g" + i, `2026-10-${String(10 + i).padStart(2, "0")}`, i % 2 === 0, i < 5 ? 80 : 160));
+  ms.push({ id: "std", start: "2026-10-30", mode: "STANDARD", winner: "DAWN", players: [P("a", "DAWN", null), P(null, "DUSK", null)] });
+  const L = E.lobby(E.squadRows(ms));
+  assert.strictEqual(L.games, 10, "standard games carry no rank and are left out");
+  assert.strictEqual(L.opp, 120);
+  assert.strictEqual(L.team, 100);
+  assert.strictEqual(L.last[0].matchId, "g9", "newest first");
+  assert.strictEqual(L.trend, 80, "last 5 (160) vs previous 5 (80)");
+  assert.strictEqual(E.rankOf(L.opp, ladder), "Bronze II");
+  assert.strictEqual(E.rankOf(999, ladder), "Bronze I");
+  assert.strictEqual(E.lobby([]).games, 0);
+  console.log("ok: lobby difficulty", L.games, "ranked games, avg opp", L.opp);
+}

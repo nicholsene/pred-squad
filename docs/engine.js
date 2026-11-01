@@ -28,6 +28,35 @@
     return (wins + k * prior) / (games + k);
   }
 
+  // ---------------- lobby difficulty (ranked games only: that's where rank points exist) ----------------
+  function avgRp(players) {
+    const v = players.map(q => q.rp).filter(x => typeof x === "number");
+    return v.length >= 3 ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  }
+  /** rows: squadRows output (any filter). One entry per match; newest first in `last`. */
+  function lobby(rows) {
+    const per = new Map();
+    for (const r of rows) if (r.oppRp != null && !per.has(r.matchId)) per.set(r.matchId, r);
+    const games = [...per.values()].sort((a, b) => String(b.start).localeCompare(String(a.start)));
+    const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    const wins = games.filter(g => g.win), losses = games.filter(g => !g.win);
+    const last = games.slice(0, 10);
+    const recent = mean(last.slice(0, 5).map(g => g.oppRp)), before = mean(last.slice(5, 10).map(g => g.oppRp));
+    return {
+      games: games.length, wins: wins.length, losses: losses.length,
+      opp: mean(games.map(g => g.oppRp)), team: mean(games.map(g => g.teamRp)),
+      oppInWins: mean(wins.map(g => g.oppRp)), oppInLosses: mean(losses.map(g => g.oppRp)),
+      last: last.map(g => ({ matchId: g.matchId, start: g.start, win: g.win, opp: g.oppRp, team: g.teamRp })),
+      trend: last.length >= 6 && recent != null && before != null ? recent - before : null,
+    };
+  }
+  /** rank name for a points value, from data/ranks.json's ladder */
+  function rankOf(points, ladder) {
+    if (points == null || !ladder || !ladder.length) return null;
+    const r = ladder.find(k => points >= k.min && points < k.max) || (points < ladder[0].min ? ladder[0] : ladder[ladder.length - 1]);
+    return r.name;
+  }
+
   // ---------------- indexing ----------------
   /** Flatten matches into one row per squad member per match, with team context. */
   function squadRows(matches) {
@@ -44,6 +73,8 @@
           together: mates.map(q => q.squad).sort(),               // squad members on my team, incl. me
           lineup: Object.fromEntries(mates.map(q => [q.squad, { role: q.role, hero: q.hero }])),
           laneOpponents: enemies.filter(e => (LANE_OPPONENT_ROLES[p.role] || []).includes(e.role)).map(e => ({ role: e.role, hero: e.hero })),
+          // lobby strength (ranked games): average rank points of the 5 opponents / of my team
+          oppRp: avgRp(enemies), teamRp: avgRp(m.players.filter(q => q.team === p.team)), myRp: typeof p.rp === "number" ? p.rp : null,
           s: p,
         });
       }
@@ -520,7 +551,7 @@
   const api = {
     LEAD_WEIGHTS,laneLead,liveStrategy,strategyObjective,
     ROLES, ROLE_LABEL, PS5, LANE_OPPONENT_ROLES, TIMELINE, boardState,
-    shrink, squadRows, togetherMatches, historyMatches, summarize, comboReport, record,
+    shrink, squadRows, togetherMatches, historyMatches, summarize, comboReport, record, lobby, rankOf,
     memberRoleScore, heroScore, suggestHeroes, suggestLineups, heroBrief, metaFor, matchPlan,
     context(matches, heroes, meta) { return { matches, heroes, meta, rows: squadRows(matches) }; },
   };

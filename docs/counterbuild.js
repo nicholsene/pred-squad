@@ -128,9 +128,14 @@
    out.recommendations=out.needs.map(n=>n.alternatives[0]).filter(Boolean);
    if(!out.recommendations.length)out.guidance.push(confirmedEnemies?"No additional suitable counter is supported by the confirmed inventories, or the team already covers the observed utility need.":"Confirm enemy inventory slots to identify an actual counterbuild need.");
   }
-  if(patchReview && !["reviewed","initial-baseline"].includes(patchReview.status)){
-    result.status="patch-review-required";result.warnings.push("Patch data or counter rules changed. Review the patch delta before using item prescriptions.");
+  // Patch gate (decision 2026-11-01, PLAN.md): only an incomplete/mismatched catalogue blocks advice.
+  // Changed-but-unsigned game data keeps advice on with a visible note; code-only changes are silent.
+  const catalogueChanges=(patchReview?.changes?.items||[]).length+(patchReview?.changes?.heroes||[]).length;
+  if(patchReview && patchReview.status==="source-incomplete"){
+    result.status="patch-review-required";result.warnings.push("Hero/item data didn't refresh completely. Refresh the data before using item advice.");
     for(const p of result.players){p.recommendations=[];p.needs=[];p.status="patch-review-required";}
+  }else if(patchReview?.status==="review-required"&&catalogueChanges){
+    result.warnings.push(`Game data changed since the last sign-off (${catalogueChanges} item/hero entr${catalogueChanges===1?"y":"ies"}). Advice uses the new numbers; new passives and mechanics aren't interpreted automatically.`);
   }else if(patchReview?.status==="initial-baseline")result.warnings.push("Initial catalogue baseline: rules have not yet been signed off against official patch notes.");
   return result;
  }

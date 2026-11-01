@@ -26,4 +26,8 @@ f=fixture();f.board.theirs[2].items=["Magic"];f.items=f.items.map(i=>i.name==="R
 assert(!B.plan(f).players[0].recommendations.some(r=>r.item.name==="Resist"));
 console.log("ok: incomplete inventory purchase gates, utility capacity, and item incompatibility");
 
-f=fixture();f.board.theirs[2].items=["Magic"];f.patchReview={status:"review-required"};assert.equal(B.plan(f).players[0].recommendations.length,0);assert.equal(B.plan(f).status,"patch-review-required");
+// Patch gate (PLAN.md decision 2026-11-01): only incomplete data blocks; changed data warns; code-only changes are silent.
+f=fixture();f.board.theirs[2].items=["Magic"];const ok=B.plan(f).players[0].recommendations.length;assert.ok(ok>0,"baseline fixture has advice");
+f.patchReview={status:"review-required",changes:{items:[],heroes:[]}};assert.equal(B.plan(f).players[0].recommendations.length,ok,"code-only change keeps advice");assert.ok(!B.plan(f).warnings.some(w=>/Game data changed/.test(w)),"code-only change is silent");
+f.patchReview={status:"review-required",changes:{items:[{id:"Magic"}],heroes:[]}};assert.equal(B.plan(f).players[0].recommendations.length,ok,"changed game data keeps advice");assert.ok(B.plan(f).warnings.some(w=>/Game data changed since the last sign-off \(1 item\/hero entry\)/.test(w)),"changed game data warns");
+f.patchReview={status:"source-incomplete"};assert.equal(B.plan(f).players[0].recommendations.length,0);assert.equal(B.plan(f).status,"patch-review-required");

@@ -39,7 +39,7 @@ Automatic icon suggestions must be verified. The initial matcher uses conservati
 
 The scheduled refresh runs at minute 0 and 30; GitHub may queue scheduled jobs later. Merges affecting code trigger an additional refresh. A failed fetch retries once after five minutes; only a second failure leaves the workflow failed. Each successful hero/item refresh downloads the current catalogue, ability descriptions and recommended skill orders, rebuilds icon references if they changed, and compares them with a checked-in baseline. Changes to item stats, costs, recipes, exclusions, hero skills/abilities, patch identifiers, and the counter-build engine appear in `docs/data/patch-review.json`.
 
-A new patch, changed catalogue, or changed counter rules pauses item prescriptions until reviewed. Incomplete or mismatched source data also pauses them. The first baseline is explicitly labelled **initial, review pending**, and never described as reviewed patch notes. Official notes are linked; prose and new mechanics are not automatically interpreted.
+Since 2026-11-01 (PLAN.md decision): only incomplete or mismatched source data pauses item prescriptions. A new patch or changed catalogue keeps advice on and shows how many item/hero entries changed since the last sign-off; code-only changes (counter rules, engine, scanner) show nothing to players. Signing off with `patch_review.py --approve` clears the note but is no longer required for advice to work. The first baseline is explicitly labelled **initial, review pending**, and never described as reviewed patch notes. Official notes are linked; prose and new mechanics are not automatically interpreted.
 
 To review a patch:
 
