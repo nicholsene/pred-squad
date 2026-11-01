@@ -219,10 +219,25 @@
   const median = a => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
 
   function inventory(src,f,gx,gy,u,side,opts,liveHero) {
-    const names=[],previews=[],candidates=[],allowed=(opts.items||[]).filter(i=>i.slot==="PASSIVE").map(i=>i.name);
+    const allowed=(opts.items||[]).filter(i=>i.slot==="PASSIVE").map(i=>i.name);
+    // nominal centres (page coords): six equipment slots follow the larger crest slot
+    const nominal=[];for(let i=0;i<6;i++)nominal.push({x:liveHero?liveHero.x0+((side==="L"?.35:.25)+i*.42)*u:gx+(side==="L"?-3.14+i*.45:1.63+i*.45)*u,y:liveHero?liveHero.y+.33*u:gy-.20*u});
+    const size=.38*u;
+    if(root.ItemVision?.matchRow){
+      // one strip per row, rendered at ~80 px per row height; the matcher aligns all six slots jointly
+      const pad=.6*u,x0=nominal[0].x-pad,x1=nominal[5].x+pad,y0=nominal[0].y-.5*u,y1=nominal[0].y+.5*u,k=80/u;
+      const W=Math.max(8,Math.round((x1-x0)*k)),H=Math.max(8,Math.round((y1-y0)*k));
+      const c=document.createElement("canvas");c.width=W;c.height=H;const g=c.getContext("2d",{willReadFrequently:true});g.imageSmoothingQuality="high";
+      g.drawImage(src,x0/(2*f),y0/(2*f),(x1-x0)/(2*f),(y1-y0)/(2*f),0,0,W,H);
+      const strip=g.getImageData(0,0,W,H);
+      const res=root.ItemVision.matchRow(strip,opts.itemTemplates,{slots:nominal.map(p=>({x:(p.x-x0)*k,y:(p.y-y0)*k})),size:size*k,u:80,allowedNames:allowed.length?allowed:undefined});
+      const previews=res.slots.map((s,i)=>{const ctr=s.center||[(nominal[i].x-x0)*k,(nominal[i].y-y0)*k],p=document.createElement("canvas");p.width=p.height=48;
+        p.getContext("2d").drawImage(c,ctr[0]-size*k/2,ctr[1]-size*k/2,size*k,size*k,0,0,48,48);return p.toDataURL("image/png");});
+      return{items:res.slots.map(s=>s.name||null),itemPreviews:previews,itemCandidates:res.slots,itemAlignment:res.offset,inventoryConfirmed:false,inventoryComplete:false};
+    }
+    const names=[],previews=[],candidates=[];
     for(let i=0;i<6;i++){
-      // Six equipment slots follow the larger crest slot below the level circle.
-      const cx=liveHero?liveHero.x0+((side==="L"?.35:.25)+i*.42)*u:gx+(side==="L"?-3.14+i*.45:1.63+i*.45)*u,cy=liveHero?liveHero.y+.33*u:gy-.20*u,size=.38*u;
+      const cx=nominal[i].x,cy=nominal[i].y;
       const c=document.createElement("canvas");c.width=c.height=48;const g=c.getContext("2d");
       g.drawImage(src,(cx-size/2)/(2*f),(cy-size/2)/(2*f),size/(2*f),size/(2*f),0,0,48,48);
       const result=root.ItemVision?root.ItemVision.match(g.getImageData(0,0,48,48),opts.itemTemplates,{patch:opts.patch,allowedNames:allowed.length?allowed:undefined}):{name:null,reason:"no_templates",confidence:0,alternatives:[]};

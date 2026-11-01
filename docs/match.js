@@ -26,6 +26,8 @@
   let me = store.get("squad-me", "");
   const archive=window.ScanArchive?.create({url:SUPABASE_URL,key:SUPABASE_KEY,onStatus:updateArchiveStatus});
   function updateArchiveStatus(s){const el=document.querySelector('#scan-archive-status');if(el)el.textContent=s.error||((s.enabled?'Saving photos privately':'Photo saving paused')+' · '+s.saved+' saved · '+s.waiting+' waiting');const toggle=document.querySelector('#scan-archive-enabled');if(toggle)toggle.checked=s.enabled;}
+  // names and reasons only (no image previews) for the private scan archive
+  function equipmentSummary(inv){return Object.fromEntries(Object.entries(inv||{}).map(([side,rows])=>[side,(rows||[]).map(r=>r?r.itemCandidates.map(c=>({name:c.name||null,reason:c.reason,alternatives:(c.alternatives||[]).map(a=>a.name)})):null)]));}
   function archiveUpdate(file,patch){void archive?.update(file?._archiveId,patch);}
   let tick = null, lastLifecycleStage = null, intakeMode = "scan", draftGameTime = null, draftGameSession = S.id;
   const planningUI=window.SquadPlanning.create({app:A,getState:()=>S,getMe:()=>me,commit,toast,exclusiveScan});
@@ -352,6 +354,8 @@
     for(const side of ["ours","theirs"])out[side]=board[side].map((r,i)=>{
       const row={role:ROLES[i],hero:r.hero||null,items:Array.from({length:6},(_,j)=>r.items?.[j]??null),
         inventoryConfirmed:r.inventoryConfirmed===true,inventoryComplete:r.inventoryComplete===true,inventoryAt:board.at};
+      // suggestions are optional: keep only catalogue equipment names so a bad read can never block the scan
+      if(!row.inventoryConfirmed&&Array.isArray(r.suggestedItems)){const ok=new Set((A.items||[]).filter(i=>i.slot==="PASSIVE").map(i=>i.name)),sug=Array.from({length:6},(_,j)=>ok.has(r.suggestedItems[j])?r.suggestedItems[j]:null);if(sug.some(Boolean))row.suggestedItems=sug;}
       for(const k of ["lvl","k","d","a","gold","cs","currentGold"])row[k]=Number.isFinite(r[k])?r[k]:null;
       if(r.who)row.who=r.who;
       return row;
@@ -401,6 +405,19 @@
           }catch(e){if(signal?.aborted)throw e;guard();archiveUpdate(file,{numericRetryError:String(e.message||e)});}
           finally{crops.forEach(c=>{c.canvas.width=c.canvas.height=0;});}
         }
+        // Equipment (Claude 2026-11-01): align each row's six slots from FreeScan's hero-name geometry and match
+        // them to catalogue icons. Names are suggestions until the player confirms them (inventoryConfirmed stays false).
+        if(window.ItemVision?.readBoard&&prepared.geometry&&A.itemTemplates){
+          try{
+            scanProgress("#board-progress","Reading equipment…",.97);
+            const inv=await window.ItemVision.readBoard(file,prepared.geometry,{catalog:A.itemTemplates,allowedNames:(A.items||[]).filter(i=>i.slot==="PASSIVE").map(i=>i.name),imageWidth:ocr.image?.width});
+            guard();
+            for(const side of ["ours","theirs"])(res[side]||[]).forEach((row,i)=>{const x=inv?.[side]?.[i];if(!row||!x)return;
+              Object.assign(row,{items:x.items,itemPreviews:x.itemPreviews,itemCandidates:x.itemCandidates,itemAlignment:x.itemAlignment,inventoryConfirmed:false,inventoryComplete:false});
+              row.readConfidence||={};row.readConfidence.items=x.itemCandidates.map(c=>({value:c.name||null,source:"item-template",metrics:{similarity:c.confidence||0},resolved:c.reason==="visual_suggestion"&&!!c.name,state:c.name?"item":"unknown"}));});
+            archiveUpdate(file,{equipment:equipmentSummary(inv)});
+          }catch(e){if(signal?.aborted)throw e;guard();archiveUpdate(file,{equipmentError:String(e.message||e)});}
+        }
       }else{
         await loadScoreboard();
         res=await window.ScoreboardScan.scan(file,{heroes:A.heroes,known:{},squad:A.squad.players,itemTemplates:A.itemTemplates,items:A.items,patch:A.itemPatch,onProgress:(m,f)=>scanProgress("#board-progress",m,f)});
@@ -423,7 +440,8 @@
         board.autoApplied=true;
         for(const side of ["ours","theirs"])board[side].forEach((row,i)=>{
           row.inventoryConfirmed=quality.inventoryReady[side][i];row.inventoryComplete=row.inventoryConfirmed;
-          if(!row.inventoryConfirmed)row.items=Array(6).fill(null);
+          // unconfirmed reads are kept only as suggestions (never owned items) so review can pre-fill them
+          if(!row.inventoryConfirmed){if((row.items||[]).some(Boolean))row.suggestedItems=row.items.slice(0,6);row.items=Array(6).fill(null);}
         });
         const clean=cleanBoard(board),changes=boardChanges(clean);
         guard();savedScan(changes,ticket,"scoreboard");
@@ -779,7 +797,7 @@
       const title=(side==="ours"?"Your team":"Enemy")+" · "+roleName(ROLES[i]);
       return '<article class="review-player" data-side="'+side+'" data-row="'+i+'" data-title="'+esc(title)+'"><h4>'+esc(title)+'</h4><div class="review-identities"><label>Hero<select data-side="'+side+'" data-row="'+i+'" data-field="hero"><option value="">Unknown</option>'+A.heroes.map(h=>'<option value="'+esc(h.slug)+'" '+(row.hero===h.slug?"selected":"")+'>'+esc(h.name)+'</option>').join("")+'</select></label>'+
       (side==="ours"?'<label>Player<select data-player-row="'+i+'" aria-label="Player in '+esc(roleName(ROLES[i]))+'"><option value="">Other teammate</option>'+A.squad.players.map(p=>'<option value="'+esc(p.key)+'" '+((row.who||(S.setup.ours[ROLES[i]]?.hero===row.hero?S.setup.ours[ROLES[i]]?.who:""))===p.key?"selected":"")+'>'+esc(p.label)+'</option>').join("")+'</select></label>':"")+'</div><div class="review-stats">'+fields.map(k=>'<label>'+({lvl:"Level",k:"Kills",d:"Deaths",a:"Assists",gold:"Total gold",cs:"CS"})[k]+'<input class="'+(row.alternatives?.[k]||window.ScanQuality.reliability(row.readConfidence?.[k],row[k])<90?"uncertain":"")+'" title="Verify against the photo" type="number" min="0" aria-label="'+side+' '+ROLES[i]+' '+k+'" data-side="'+side+'" data-row="'+i+'" data-field="'+k+'" value="'+(row[k]??"")+'"></label>').join("")+'</div>'+
-      '<details class="inventory-review" data-inventory="'+side+'-'+i+'" '+(equipment?"open":"")+'><summary>Review equipment</summary><div class="inventory-slots">'+Array.from({length:6},(_,j)=>'<label>Slot '+(j+1)+(row.itemPreviews?.[j]?'<img class="item-crop" alt="Item slot '+(j+1)+' from photo" src="'+esc(row.itemPreviews[j])+'">':"")+'<input list="inventory-catalog" data-item-side="'+side+'" data-item-row="'+i+'" data-item-slot="'+j+'" aria-label="'+side+' '+ROLES[i]+' item '+(j+1)+'" placeholder="Unknown / empty" value="'+esc(catalog.get(row.items?.[j])?.label||"")+'"></label>').join("")+'</div>'+
+      '<details class="inventory-review" data-inventory="'+side+'-'+i+'" '+(equipment?"open":"")+'><summary>Review equipment</summary><div class="inventory-slots">'+Array.from({length:6},(_,j)=>'<label>Slot '+(j+1)+(row.itemPreviews?.[j]?'<img class="item-crop" alt="Item slot '+(j+1)+' from photo" src="'+esc(row.itemPreviews[j])+'">':"")+'<input list="inventory-catalog" data-item-side="'+side+'" data-item-row="'+i+'" data-item-slot="'+j+'" aria-label="'+side+' '+ROLES[i]+' item '+(j+1)+'" placeholder="Unknown / empty" value="'+esc(catalog.get(row.items?.[j]??row.suggestedItems?.[j])?.label||"")+'"'+(row.items?.[j]==null&&row.suggestedItems?.[j]?' data-suggested="1"':"")+'></label>').join("")+'</div>'+
       '<label><input type="checkbox" data-confirm-side="'+side+'" data-confirm-row="'+i+'" '+(row.inventoryConfirmed?"checked":"")+'> I checked these item names</label><label><input type="checkbox" data-complete-side="'+side+'" data-complete-row="'+i+'" '+(row.inventoryComplete?"checked":"")+'> All six slots visible; blanks are empty</label>'+
       (side==="ours"?'<label>Spendable gold (optional, HUD)<input type="number" min="0" max="99999" data-current-gold="'+i+'" value="'+(row.currentGold??"")+'" placeholder="Unknown"></label>':"")+'</details></article>';
     })).join("")+'</div><div class="review-footer"><button class="chip cta" id="scan-apply">Update strategy</button><button class="chip" id="scan-cancel">Cancel</button></div>';

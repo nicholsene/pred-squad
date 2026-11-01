@@ -241,3 +241,6 @@ body.match-focus #scan-progress.photo-scan-progress{display:grid!important;grid-
 .mf-build-explorer .quick-recommendation{display:flex;flex-direction:column;gap:8px}
 .mf-build-explorer .quick-build-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;list-style:none;padding:0;margin:0}
 .mf-build-explorer .quick-build-items li{display:flex;align-items:center;gap:4px;min-width:0;font-size:10px}.mf-build-explorer .quick-item-label{overflow-wrap:anywhere}
+
+/* item names pre-filled from the photo, not yet checked */
+input[data-suggested="1"]{border-style:dashed;}

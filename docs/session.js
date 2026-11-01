@@ -114,6 +114,7 @@
       if(heroIds&&row.hero&&!heroIds.has(row.hero))throw new Error("Choose a catalog hero.");
       if(row.items!=null&&(!Array.isArray(row.items)||row.items.length>6))throw new Error("Inventory must contain at most six item slots.");
       if(itemIds&&(row.items||[]).some(id=>id!=null&&!itemIds.has(id)))throw new Error("Choose valid catalog items.");
+      if(row.suggestedItems!=null&&(!Array.isArray(row.suggestedItems)||row.suggestedItems.length>6||itemIds&&row.suggestedItems.some(id=>id!=null&&!itemIds.has(id))))throw new Error("Suggested items must be catalog items.");
       for(const key of ["inventoryConfirmed","inventoryComplete"])if(row[key]!=null&&typeof row[key]!=="boolean")throw new Error("Confirm inventory status.");
       if(row.currentGold!=null&&(!Number.isInteger(row.currentGold)||row.currentGold<0||row.currentGold>99999))throw new Error("Check current spendable gold.");
     }
