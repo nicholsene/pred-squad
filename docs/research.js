@@ -52,6 +52,8 @@
       const thin = S.games < 10;
       html += `<p class="research-head"><b>${S.games}</b> high-ranked ${S.games === 1 ? "build" : "builds"} of ${esc(heroName(pick.hero))} ${esc((LANES.find(l => l[0] === pick.role) || [])[1] || "")}${esc(vsLabel)} · won ${pct(S.wins, S.games)}` +
         (thin ? ' <span class="research-thin">Small sample: treat as examples, not a rule.</span>' : "") + "</p>";
+      const gp = window.ResearchPlan ? window.ResearchPlan.plan({ research: D, hero: pick.hero, role: pick.role, enemy: pick.vs && !pick.vs.startsWith("class:") ? pick.vs : null, heroes: A.heroes, items: A.items }) : null;
+      if (gp?.findings?.length) html += '<div class="sub-h">Game plan</div><ul class="research-plan">' + gp.findings.map(f => "<li>" + esc(f.text) + "</li>").join("") + "</ul>";
       if (S.openings?.length) {
         html += '<div class="sub-h">Most common first three items</div><ol class="research-open">' + S.openings.map(o => {
           const c = classify(o.items);

@@ -250,3 +250,7 @@ input[data-suggested="1"]{border-style:dashed;}
 #match-focus #lifecycle .quick-recommendation{overscroll-behavior:contain}
 #match-focus #lifecycle .quick-build-type{margin:0;font-size:.82rem;color:var(--muted,#9aa7b8)}
 #match-focus #lifecycle .quick-build-type b{color:inherit;font-weight:650}
+#match-focus #lifecycle .quick-game-plan{border-top:1px solid var(--edge);padding-top:6px}
+#match-focus #lifecycle .quick-game-plan summary{cursor:pointer;font-weight:650}
+#match-focus #lifecycle .quick-game-plan ul{margin:6px 0;padding-left:18px;display:grid;gap:4px;font-size:.86rem}
+#match-focus #lifecycle .quick-game-plan small{opacity:.7}

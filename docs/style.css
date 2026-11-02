@@ -573,3 +573,4 @@ body{padding-bottom:110px;line-height:1.5}.ambient{background:radial-gradient(el
 .research-items{width:100%;border-collapse:collapse;font-size:.85rem}
 .research-items th,.research-items td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--edge,#2a3644)}
 .research-items th:first-child,.research-items td:first-child{text-align:left}
+.research-plan{margin:4px 0 8px;padding-left:18px;display:grid;gap:4px;font-size:.88rem}

@@ -17,12 +17,17 @@ b = research.builds_from_match(match, cat, 1200)
 assert [x["hero"] for x in b] == ["skylar", "murdock"], b          # below the cut-off is dropped
 sky = b[0]
 assert sky["items"] == ["A", "B", "C"] and sky["mins"] == [1, 2, 3] and sky["win"] == 1 and sky["enemy"] == "murdock"
+assert sky["foes"] == ["grux", "murdock"] and sky["g10"] is None and sky["k"] is None
+long = [g * 400 for g in range(16)]
+m2 = {"winningTeam": "DAWN", "duration": 1800, "matchPlayers": [dict(mp("skylar", "CARRY", "DAWN", ["A"], 1300, long), kills=7, deaths=2, assists=5), mp("murdock", "CARRY", "DUSK", ["B"], 1300, [g * 300 for g in range(16)])]}
+b2 = research.builds_from_match(m2, cat, 1200)[0]
+assert b2["g10"] == 1000 and b2["g15"] == 1500 and b2["dur"] == 30 and (b2["k"], b2["d"], b2["a"]) == (7, 2, 5)
 assert "secret" not in json.dumps(b).lower()                        # no names or ids are kept
 agg = research.aggregate({"matches": {"m1": {"builds": b}, "m2": {"builds": [dict(sky, win=0)]}}, "sampledPlayers": 2, "minPoints": 1200},
                          [{"slug": "murdock", "classes": ["SHARPSHOOTER"]}])
 s = agg["heroes"]["skylar"]["CARRY"]
 assert s["games"] == 2 and s["wins"] == 1 and s["items"]["A"] == [2, 1, 0] and s["items"]["C"][2] == 4
 assert s["openings"][0] == {"items": ["A", "B", "C"], "games": 2, "wins": 1}
-assert s["vs"]["murdock"]["games"] == 2 and s["vsClass"]["SHARPSHOOTER"]["games"] == 2
+assert s["vs"]["murdock"]["games"] == 2 and set(("lane", "length", "early", "kda")) <= set(s) and s["vsClass"]["SHARPSHOOTER"]["games"] == 2
 assert not any(k in agg for k in ("heroes_", "matches", "items", "ranks")) or isinstance(agg.get("matches"), (list, dict))   # fetch.refresh rejects non-list "matches"
 print("ok: research cut-off, anonymity, buy order, minutes, enemy laner and aggregation")

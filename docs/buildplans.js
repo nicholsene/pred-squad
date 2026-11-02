@@ -107,6 +107,7 @@
   const score=it=>{
    const L=LANE[c.role]||LANE.MIDLANE;let n=stat(it,power)/50*(c.tank?.6:1.5)*L.power+stat(it,'ABILITY_HASTE')/20*(c.marksman?.25:1)*L.haste+(stat(it,'HEALTH')/400*(c.tank?1.5:.35)+((stat(it,'PHYSICAL_ARMOR')+stat(it,'MAGICAL_ARMOR'))/50)*(c.tank?1.5:.2))*L.def+stat(it,penetration)/15*(L.pen-1)*2+(stat(it,c.damage==='physical'?'LIFESTEAL':'MAGICAL_LIFESTEAL')+stat(it,'OMNIVAMP'))/10*((L.sustain||1)-1)*2;
    if(ev)n+=ev.share(it.name)*(style==='balanced'?6:2.5);
+   if(input.counterBonus?.get)n+=input.counterBonus.get(it.name)||0;   // items top players add vs this laner/team (researchplan.js)
    if(c.classes.includes(it.class))n+=1;
    if(c.marksman)n+=stat(it,'ATTACK_SPEED')/35+Math.min(stat(it,'CRITICAL_CHANCE'),Math.max(0,100-(totals.CRITICAL_CHANCE||0)))/25*.65;
    if(c.support)n+=stat(it,'HEAL_AND_SHIELD_POWER')/10*2+stat(it,'BASE_MANA_REGENERATION')/100+(['SUPPORT'].includes(it.class)?1:0);

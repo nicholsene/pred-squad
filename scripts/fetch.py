@@ -435,7 +435,7 @@ def main() -> int:
         import research
         rcfg = CONFIG.get("research") or {}
         prev = load("research.json", {})
-        stale = not prev.get("updatedAt") or (datetime.now(timezone.utc) - datetime.fromisoformat(prev["updatedAt"].replace("Z", "+00:00"))).total_seconds() > 20 * 3600
+        stale = prev.get("schema") != research.SCHEMA or not prev.get("updatedAt") or (datetime.now(timezone.utc) - datetime.fromisoformat(prev["updatedAt"].replace("Z", "+00:00"))).total_seconds() > 20 * 3600
         if rcfg.get("enabled") and stale:
             catalog = {i["name"]: i for i in item_file.get("items", [])}
             def research_data():
