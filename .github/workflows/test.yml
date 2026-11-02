@@ -30,6 +30,7 @@ jobs:
       - run: node tests/test_counterbuild.js
       - run: node tests/test_itemvision.js
       - run: node tests/test_buildplans.js
+      - run: node tests/test_build_variety.js
       - run: node tests/test_starting_suggestions.js
       - run: node tests/test_buildscan.js
       - run: node tests/test_profiles.js

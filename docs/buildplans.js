@@ -47,24 +47,37 @@
   if(style==='durable')return stat(it,'HEALTH')>0&&(stat(it,'PHYSICAL_ARMOR')>0||stat(it,'MAGICAL_ARMOR')>0)||['ANTI_BURST','SPELL_SHIELD'].includes(it.type);
   return false;
  }
+ /* What players actually finished with in our recorded matches (all 10 players per match), shrunk from
+    hero+lane toward hero, then lane. Popularity in our lobbies, not a win probability. */
+ function observed(matches,slug,role){
+  const g=()=>({n:0,c:{}}),hr=g(),h=g(),r=g();
+  for(const m of Array.isArray(matches)?matches:[])for(const p of m?.players||[]){if(!Array.isArray(p?.items)||!p.items.length)continue;const into=[];if(p.hero===slug&&p.role===role)into.push(hr);if(p.hero===slug)into.push(h);if(p.role===role)into.push(r);for(const t of into){t.n++;for(const n of new Set(p.items))t.c[n]=(t.c[n]||0)+1;}}
+  if(!h.n&&!r.n)return null;
+  const share=name=>{const pr=r.n?(r.c[name]||0)/r.n:0,ph=((h.c[name]||0)+5*pr)/(h.n+5);return((hr.c[name]||0)+5*ph)/(hr.n+5);};
+  return{share,games:{heroRole:hr.n,hero:h.n,role:r.n}};
+ }
+ /* Lane emphasis for heroes outside their usual job: offlane/jungle/support need more staying power,
+    mid more haste and penetration, carry more damage. */
+ const LANE={CARRY:{power:1.25,def:.7,haste:.8,pen:1},MIDLANE:{power:1.1,def:.8,haste:1.35,pen:1.3},OFFLANE:{power:.9,def:2.2,haste:1,pen:1},JUNGLE:{power:1.05,def:1.5,haste:1,pen:1.1,sustain:1.5},SUPPORT:{power:.7,def:2,haste:1.5,pen:.8}};
  function stylesFor(input={}){const c=suggestionContext(input);if(!c)return[];return STYLES.filter(s=>s.id!=='mana'||c.hasMana).filter(s=>!['crit','attack-speed'].includes(s.id)||c.marksman).filter(s=>['balanced','aggressive'].includes(s.id)||c.pool.some(it=>focused(it,s.id,c))).map(s=>({...s,label:s.id==='durable'&&c.tank?'Tank / durability':s.id==='sustain'&&c.support?'Healing / sustain':s.label}));}
  function suggest(input={}){
   const c=suggestionContext(input),style=input.style||'balanced';if(!c)return{status:'needs-context',items:[],reason:'Choose your hero and lane to see a starting build.'};
   /* PLAN.md 2026-11-01: only incomplete data blocks; changed data or code still allows suggestions */if(input.patchReview?.status==='source-incomplete')return{status:'review-required',items:[],reason:'Hero and item data did not refresh completely. Try again after the next data update.'};
   const choice=stylesFor(input).find(s=>s.id===style);if(!choice)return{status:'unsupported-style',items:[],reason:'Choose a style suited to this hero.'};
-  const selected=[],totals={},power=c.damage==='physical'?'PHYSICAL_POWER':'MAGICAL_POWER',penetration=c.damage==='physical'?'PHYSICAL_PENETRATION':'MAGICAL_PENETRATION';
+  const ev=observed(input.matches,c.h.slug,c.role),selected=[],totals={},power=c.damage==='physical'?'PHYSICAL_POWER':'MAGICAL_POWER',penetration=c.damage==='physical'?'PHYSICAL_PENETRATION':'MAGICAL_PENETRATION';
   const legal=it=>!selected.some(s=>s.name===it.name||[...(it.blocks||[]),...(it.blockedBy||[])].includes(s.name)||[...(s.blocks||[]),...(s.blockedBy||[])].includes(it.name));
   const score=it=>{
-   let n=stat(it,power)/50*(c.tank?.6:1.5)+stat(it,'ABILITY_HASTE')/20*(c.marksman?.25:1)+stat(it,'HEALTH')/400*(c.tank?1.5:.35)+((stat(it,'PHYSICAL_ARMOR')+stat(it,'MAGICAL_ARMOR'))/50)*(c.tank?1.5:.2);
+   const L=LANE[c.role]||LANE.MIDLANE;let n=stat(it,power)/50*(c.tank?.6:1.5)*L.power+stat(it,'ABILITY_HASTE')/20*(c.marksman?.25:1)*L.haste+(stat(it,'HEALTH')/400*(c.tank?1.5:.35)+((stat(it,'PHYSICAL_ARMOR')+stat(it,'MAGICAL_ARMOR'))/50)*(c.tank?1.5:.2))*L.def+stat(it,penetration)/15*(L.pen-1)*2+(stat(it,c.damage==='physical'?'LIFESTEAL':'MAGICAL_LIFESTEAL')+stat(it,'OMNIVAMP'))/10*((L.sustain||1)-1)*2;
+   if(ev)n+=ev.share(it.name)*(style==='balanced'?6:2.5);
    if(c.classes.includes(it.class))n+=1;
    if(c.marksman)n+=stat(it,'ATTACK_SPEED')/35+Math.min(stat(it,'CRITICAL_CHANCE'),Math.max(0,100-(totals.CRITICAL_CHANCE||0)))/25*.65;
    if(c.support)n+=stat(it,'HEAL_AND_SHIELD_POWER')/10*2+stat(it,'BASE_MANA_REGENERATION')/100+(['SUPPORT'].includes(it.class)?1:0);
    if(style==='aggressive')n+=stat(it,power)/50*2+stat(it,penetration)/15+(it.type==='BURST'?1:0);
-   if(style==='attack-speed')n+=stat(it,'ATTACK_SPEED')/30*3;
+   if(style==='attack-speed')n+=stat(it,'ATTACK_SPEED')/30*4;
    if(style==='crit')n+=Math.min(stat(it,'CRITICAL_CHANCE'),Math.max(0,100-(totals.CRITICAL_CHANCE||0)))/20*3+(it.type==='CRIT_AMP'?1:0);
-   if(style==='mana')n+=stat(it,'BASE_MANA_REGENERATION')/100*1.5+stat(it,'MANA')/400;
-   if(style==='sustain')n+=(stat(it,c.damage==='physical'?'LIFESTEAL':'MAGICAL_LIFESTEAL')+stat(it,'OMNIVAMP'))/10*2;
-   if(style==='durable')n+=((stat(it,'PHYSICAL_ARMOR')+stat(it,'MAGICAL_ARMOR'))/50+stat(it,'HEALTH')/400)*(c.tank?2:.25);
+   if(style==='mana')n+=stat(it,'BASE_MANA_REGENERATION')/100*3+stat(it,'MANA')/250;
+   if(style==='sustain')n+=(stat(it,c.damage==='physical'?'LIFESTEAL':'MAGICAL_LIFESTEAL')+stat(it,'OMNIVAMP'))/10*3;
+   if(style==='durable')n+=((stat(it,'PHYSICAL_ARMOR')+stat(it,'MAGICAL_ARMOR'))/50+stat(it,'HEALTH')/400)*(c.tank?2:.8);
    // Diminish repeated utility; do not fill every slot with the same answer.
    if(it.type&&selected.some(s=>s.type===it.type))n-=.6;
    if((totals.CRITICAL_CHANCE||0)>=100&&stat(it,'CRITICAL_CHANCE')>0)n-=2;
@@ -74,14 +87,15 @@
   // Start with the hero's core job, then satisfy the chosen style with real stat evidence.
   add(it=>c.tank?focused(it,'durable',c):c.support?it.class==='SUPPORT':stat(it,power)>0&&(c.marksman?stat(it,'ATTACK_SPEED')>0:true));
   if(!['balanced','aggressive'].includes(style)){
-   const wanted=style==='durable'&&!c.tank?1:2;
+   const wanted=style==='durable'&&!c.tank?2:3;
    for(let n=selected.filter(it=>focused(it,style,c)).length;n<wanted;n++)if(!add(it=>focused(it,style,c)))break;
   }
   if(style==='balanced'&&!selected.some(it=>focused(it,'sustain',c)))add(it=>focused(it,'sustain',c));
   if(!c.support&&!c.tank&&!selected.some(it=>focused(it,'anti-tank',c)))add(it=>focused(it,'anti-tank',c));
   while(selected.length<6)if(!add(it=>c.marksman?stat(it,power)>0||stat(it,'ATTACK_SPEED')>0:c.tank?stat(it,'HEALTH')>0||stat(it,'PHYSICAL_ARMOR')>0||stat(it,'MAGICAL_ARMOR')>0:c.support?it.class==='SUPPORT'||stat(it,'HEAL_AND_SHIELD_POWER')>0:stat(it,power)>0))break;
   if(selected.length!==6)return{status:'insufficient-items',items:[],reason:'Six compatible current items are unavailable. Review a custom build instead.'};
-  return{status:'ready',hero:c.h.slug,role:c.role,style,label:choice.label,tip:choice.tip,items:selected.map(it=>it.name),cost:selected.reduce((n,it)=>n+it.cost,0),stats:totals,damage:c.damage,countsAsOwned:false,source:'catalogue-suggestion'};
+  const rec=style==='balanced'?null:suggest({...input,style:'balanced'}),shared=rec?.items?selected.filter(it=>rec.items.includes(it.name)).length:0;
+  return{status:'ready',sharedWithRecommended:rec?shared:null,hero:c.h.slug,role:c.role,style,label:choice.label,tip:choice.tip,items:selected.map(it=>it.name),cost:selected.reduce((n,it)=>n+it.cost,0),stats:totals,damage:c.damage,evidence:ev?ev.games:null,countsAsOwned:false,source:ev&&ev.games.heroRole?'match-history+catalogue':'catalogue-suggestion'};
  }
  function serialize({plans={},pivots={},catalog=[],heroes=[],now=Date.now()}={}){const clean={plans:{},pivots:{}};for(const[who,r]of Object.entries(plans))try{const p=createBaseline({...r,catalog,heroes,now});if(p.who===who)clean.plans[who]=p;}catch{}for(const[who,r]of Object.entries(pivots))try{const p=createPivot({...r,catalog,heroes,now});if(p.who===who)clean.pivots[who]=p;}catch{}return clean;}
  return{suggest,stylesFor,createBaseline,createPivot,getBaseline,getPivot,compare,team,serialize};
