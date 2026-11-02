@@ -16,3 +16,6 @@ assert(!B.stylesFor({...input,hero:'gideon',role:'MIDLANE'}).some(s=>s.id==='cri
 assert.equal(B.suggest({...input,patchReview:{status:'source-incomplete'}}).status,'review-required');assert.equal(B.suggest({...input,hero:'missing'}).status,'needs-context');
 const blocked=catalog.map(i=>({...i,blocks:catalog.map(x=>x.name)}));assert.equal(B.suggest({...input,catalog:blocked}).status,'insufficient-items');
 console.log('ok: every supported hero/lane/style yields six legal targets; sustain, mana, damage fit, costs, patch gates and ownership separation');
+// PLAN.md 2026-11-01: a code-only or changed-data review state must not hide starting builds (Eric hit this on Skylar).
+for(const status of ['review-required','initial-baseline','reviewed']){const r=B.suggest({...input,role:'OFFLANE',style:'crit',patchReview:{...patchReview,status,changes:{items:[],heroes:[]}}});assert.notEqual(r.status,'review-required','status '+status+' must still suggest');}
+console.log("ok: starting builds stay available unless hero/item data is incomplete");

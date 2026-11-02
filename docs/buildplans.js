@@ -50,7 +50,7 @@
  function stylesFor(input={}){const c=suggestionContext(input);if(!c)return[];return STYLES.filter(s=>s.id!=='mana'||c.hasMana).filter(s=>!['crit','attack-speed'].includes(s.id)||c.marksman).filter(s=>['balanced','aggressive'].includes(s.id)||c.pool.some(it=>focused(it,s.id,c))).map(s=>({...s,label:s.id==='durable'&&c.tank?'Tank / durability':s.id==='sustain'&&c.support?'Healing / sustain':s.label}));}
  function suggest(input={}){
   const c=suggestionContext(input),style=input.style||'balanced';if(!c)return{status:'needs-context',items:[],reason:'Choose your hero and lane to see a starting build.'};
-  if(!['reviewed','initial-baseline'].includes(input.patchReview?.status))return{status:'review-required',items:[],reason:'Current item data needs review before a new build can be suggested.'};
+  /* PLAN.md 2026-11-01: only incomplete data blocks; changed data or code still allows suggestions */if(input.patchReview?.status==='source-incomplete')return{status:'review-required',items:[],reason:'Hero and item data did not refresh completely. Try again after the next data update.'};
   const choice=stylesFor(input).find(s=>s.id===style);if(!choice)return{status:'unsupported-style',items:[],reason:'Choose a style suited to this hero.'};
   const selected=[],totals={},power=c.damage==='physical'?'PHYSICAL_POWER':'MAGICAL_POWER',penetration=c.damage==='physical'?'PHYSICAL_PENETRATION':'MAGICAL_PENETRATION';
   const legal=it=>!selected.some(s=>s.name===it.name||[...(it.blocks||[]),...(it.blockedBy||[])].includes(s.name)||[...(s.blocks||[]),...(s.blockedBy||[])].includes(it.name));
