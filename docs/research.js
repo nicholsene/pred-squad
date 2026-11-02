@@ -65,7 +65,7 @@
       const mins = (S.minutes || []).map((m, k) => (m == null ? null : `#${k + 1} ~${m} min`)).filter(Boolean);
       if (mins.length) html += `<p class="note">Typical time each item is affordable (from gold earned): ${mins.join(" · ")}</p>`;
     }
-    html += `<p class="note">From ${D.matches} ranked matches of the top ${D.sampledPlayers} leaderboard players; builds from ${Math.round(D.minPoints)}+ rank points only. Final items only: "Buy #" is slot order, which follows purchase order. Updated ${esc((D.updatedAt || "").slice(0, 10))}.</p>`;
+    html += `<p class="note">From ${D.matchCount} ranked matches of the top ${D.sampledPlayers} leaderboard players; builds from ${Math.round(D.minPoints)}+ rank points only. Final items only: "Buy #" is slot order, which follows purchase order. Updated ${esc((D.updatedAt || "").slice(0, 10))}.</p>`;
     body.innerHTML = html;
     body.querySelectorAll("select[data-r]").forEach(s => (s.onchange = () => { pick[s.dataset.r] = s.value; if (s.dataset.r !== "vs") pick.vs = ""; render(); }));
   }

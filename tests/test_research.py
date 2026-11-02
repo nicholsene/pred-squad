@@ -24,4 +24,5 @@ s = agg["heroes"]["skylar"]["CARRY"]
 assert s["games"] == 2 and s["wins"] == 1 and s["items"]["A"] == [2, 1, 0] and s["items"]["C"][2] == 4
 assert s["openings"][0] == {"items": ["A", "B", "C"], "games": 2, "wins": 1}
 assert s["vs"]["murdock"]["games"] == 2 and s["vsClass"]["SHARPSHOOTER"]["games"] == 2
+assert not any(k in agg for k in ("heroes_", "matches", "items", "ranks")) or isinstance(agg.get("matches"), (list, dict))   # fetch.refresh rejects non-list "matches"
 print("ok: research cut-off, anonymity, buy order, minutes, enemy laner and aggregation")

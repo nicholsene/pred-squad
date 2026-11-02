@@ -151,5 +151,5 @@ def aggregate(cache: dict, heroes: list[dict]) -> dict:
     patches = sorted({m.get("patch") for m in cache.get("matches", {}).values() if m.get("patch")})
     return {"updatedAt": now_iso(), "source": "pred.gg ranked matches of top leaderboard players",
             "sampledPlayers": cache.get("sampledPlayers"), "minPoints": cache.get("minPoints"),
-            "matches": len(cache.get("matches", {})), "builds": n_builds, "patches": patches,
+            "matchCount": len(cache.get("matches", {})), "builds": n_builds, "patches": patches,
             "roles": {k: finish(v, 60) for k, v in roles.items()}, "heroes": heroes_out}
