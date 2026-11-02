@@ -244,3 +244,7 @@ body.match-focus #scan-progress.photo-scan-progress{display:grid!important;grid-
 
 /* item names pre-filled from the photo, not yet checked */
 input[data-suggested="1"]{border-style:dashed;}
+/* Recommended build card: children keep their size and the card scrolls inside itself, instead of the item grid
+   being squashed so its rows overlap the tip text and the "Use this build" button (Eric's iPhone, 2026-11-01). */
+#match-focus #lifecycle .quick-recommendation>*{flex-shrink:0}
+#match-focus #lifecycle .quick-recommendation{overscroll-behavior:contain}
