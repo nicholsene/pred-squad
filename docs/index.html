@@ -59,6 +59,7 @@
     </div>
     <p class="note">Recommendation scores blend your results with patch meta. They are not calibrated win probabilities. Small samples mean more uncertainty.</p>
     <div id="profile-insights"></div><div id="starting-builds" class="tile"></div>
+    <details id="research" class="tile research"><summary>Top-player builds</summary><div class="research-body"></div></details>
     <details class="plan-lineup"><summary>Edit your lineup</summary><div id="plan-setup"></div></details>
     <div class="sub-h">Picks and roles</div>
     <div id="draft-controls" class="tile"></div>
@@ -146,6 +147,7 @@
 <script src="planning.js"></script>
 <script src="optimizer-ui.js"></script>
 <script src="app.js"></script>
+<script src="research.js"></script>
 <script>if ("serviceWorker" in navigator) {
   const had = !!navigator.serviceWorker.controller; let done = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !done) { done = true; location.reload(); } });

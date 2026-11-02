@@ -50,7 +50,7 @@ pred.gg's public API serves heroes and patches without an account. **Match histo
 Never commit the secret to the repo.
 
 ### 2. Repo and hosting
-- Keep the repo **private**. pred.gg's terms allow personal use and prohibit republishing their material.
+- Keep the repo **private**. pred.gg's terms allow personal use and prohibit republishing their material. The top-player research catalogue (`scripts/research.py`) only runs while the repo is private.
 - GitHub Pages on a free plan makes the site public, even from a private repo. Options:
   - **Open it locally:** clone the repo, then run `python -m http.server -d docs` and open http://localhost:8000.
   - **GitHub Pages** (Settings → Pages → branch `main`, folder `/docs`). The page is marked `noindex`, but anyone with the link can see it. Only do this if pred.gg is OK with it (ask in their Discord).

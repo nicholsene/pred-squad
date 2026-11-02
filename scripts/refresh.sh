@@ -18,6 +18,7 @@ attempt() {
   git clean -fd -- docs/data || return 1
   python scripts/fetch.py "$@" || fetch_status=$?
   git add -- docs/data || return 1
+  if [[ -f research/cache.json ]]; then git add -- research/cache.json || return 1; fi
   git diff --cached --quiet || diff_status=$?
   if (( diff_status > 1 )); then return 1; fi
   if (( diff_status == 1 )); then

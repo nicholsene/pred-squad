@@ -248,3 +248,5 @@ input[data-suggested="1"]{border-style:dashed;}
    being squashed so its rows overlap the tip text and the "Use this build" button (Eric's iPhone, 2026-11-01). */
 #match-focus #lifecycle .quick-recommendation>*{flex-shrink:0}
 #match-focus #lifecycle .quick-recommendation{overscroll-behavior:contain}
+#match-focus #lifecycle .quick-build-type{margin:0;font-size:.82rem;color:var(--muted,#9aa7b8)}
+#match-focus #lifecycle .quick-build-type b{color:inherit;font-weight:650}

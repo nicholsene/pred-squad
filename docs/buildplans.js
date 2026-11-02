@@ -48,13 +48,51 @@
   return false;
  }
  /* What players actually finished with in our recorded matches (all 10 players per match), shrunk from
-    hero+lane toward hero, then lane. Popularity in our lobbies, not a win probability. */
- function observed(matches,slug,role){
-  const g=()=>({n:0,c:{}}),hr=g(),h=g(),r=g();
-  for(const m of Array.isArray(matches)?matches:[])for(const p of m?.players||[]){if(!Array.isArray(p?.items)||!p.items.length)continue;const into=[];if(p.hero===slug&&p.role===role)into.push(hr);if(p.hero===slug)into.push(h);if(p.role===role)into.push(r);for(const t of into){t.n++;for(const n of new Set(p.items))t.c[n]=(t.c[n]||0)+1;}}
+    hero+lane toward hero, then lane. Popularity in our lobbies, not a win probability.
+    pred.gg lists passive items in slot order and new items fill the first free slot, so the order of
+    finished items is (approximately) purchase order: checked on 1,260 builds (PLAN.md 2026-11-02). */
+ const isFinal=it=>!!it&&it.slot==='PASSIVE'&&!it.hidden&&Number.isFinite(it.cost)&&it.cost>=1800;
+ function observed(matches,slug,role,C={}){
+  const g=()=>({n:0,c:{},pos:{},t:[]}),hr=g(),h=g(),r=g();
+  for(const m of Array.isArray(matches)?matches:[])for(const p of m?.players||[]){if(!Array.isArray(p?.items)||!p.items.length)continue;const into=[];if(p.hero===slug&&p.role===role)into.push(hr);if(p.hero===slug)into.push(h);if(p.role===role)into.push(r);if(!into.length)continue;
+   const F=p.items.filter(n=>isFinal(C[n])),curve=Array.isArray(p.goldCurve)?p.goldCurve:[],mins=[];let cum=0;
+   for(const n of F){cum+=C[n].cost;const t=curve.findIndex(v=>v>=cum);mins.push(t<0?null:t);}
+   for(const t of into){t.n++;for(const n of new Set(p.items))t.c[n]=(t.c[n]||0)+1;F.forEach((n,k)=>(t.pos[n]=t.pos[n]||[]).push(k));t.t.push(mins);}}
   if(!h.n&&!r.n)return null;
   const share=name=>{const pr=r.n?(r.c[name]||0)/r.n:0,ph=((h.c[name]||0)+5*pr)/(h.n+5);return((hr.c[name]||0)+5*ph)/(hr.n+5);};
-  return{share,games:{heroRole:hr.n,hero:h.n,role:r.n}};
+  const sum=(g,n)=>(g.pos[n]||[]).reduce((a,b)=>a+b,0),cnt=(g,n)=>(g.pos[n]||[]).length;
+  const position=name=>{const pr=cnt(r,name)?sum(r,name)/cnt(r,name):2.5,ph=(sum(h,name)+3*pr)/(cnt(h,name)+3);return(sum(hr,name)+3*ph)/(cnt(hr,name)+3);};
+  const median=v=>{v=v.filter(Number.isFinite).sort((a,b)=>a-b);return v.length>=3?v[Math.floor(v.length/2)]:null;};
+  const minute=k=>{for(const grp of[hr,h,r]){const m=median(grp.t.map(x=>x[k]));if(m!=null)return m;}return null;};
+  return{share,position,minute,games:{heroRole:hr.n,hero:h.n,role:r.n}};
+ }
+ /* Same shape as observed(), from the research catalogue (top leaderboard players' ranked games, docs/data/research.json). */
+ function fromResearch(R,slug,role){
+  const hr=R?.heroes?.[slug]?.[role],rl=R?.roles?.[role];if(!hr&&!rl)return null;
+  const n=hr?.games||0,rs=name=>rl?.games?((rl.items?.[name]?.[0])||0)/rl.games:0;
+  const share=name=>((hr?.items?.[name]?.[0]||0)+5*rs(name))/(n+5);
+  const position=name=>{const a=hr?.items?.[name],b=rl?.items?.[name],pr=b&&b[0]?b[2]/b[0]:2.5;return((a?a[2]:0)+3*pr)/((a?a[0]:0)+3);};
+  const minute=k=>hr?.minutes?.[k]??rl?.minutes?.[k]??null;
+  return{share,position,minute,games:{research:n,researchRole:rl?.games||0}};
+ }
+ /* Top players' builds lead once there are enough of them; our own lobbies stay as a smaller weight. */
+ function blend(res,lobby){
+  if(!res||res.games.research<5)return lobby?{...lobby,games:{...lobby.games,research:res?res.games.research:0}}:res;
+  if(!lobby)return res;
+  return{share:n=>.75*res.share(n)+.25*lobby.share(n),position:res.position,minute:k=>res.minute(k)??lobby.minute(k),games:{...lobby.games,...res.games}};
+ }
+ /* Name a build by what its finished items add up to (thresholds near the 90th percentile of recorded builds). */
+ function classify(names,catalog=[]){
+  const C=Array.isArray(catalog)?Object.fromEntries(catalog.map(i=>[i.name,i])):catalog,F=(names||[]).map(n=>C[n]).filter(isFinal),t={};
+  for(const it of F)for(const[k,v]of Object.entries(it.stats||{}))if(Number.isFinite(v))t[k]=(t[k]||0)+v;
+  const v=k=>t[k]||0,phys=v('PHYSICAL_POWER')/255,mag=v('MAGICAL_POWER')/425,damage=phys<.25&&mag<.25?'utility':phys>=mag?'physical':'magical',typed=n=>F.filter(it=>n.includes(it.type)).length;
+  const def=Math.min(1.4,(v('HEALTH')/1325+(v('PHYSICAL_ARMOR')+v('MAGICAL_ARMOR'))/185)/2);
+  const score={crit:v('CRITICAL_CHANCE')/100,'attack-speed':v('ATTACK_SPEED')/115*(v('CRITICAL_CHANCE')>=60?.6:1),sustain:(v('LIFESTEAL')+v('MAGICAL_LIFESTEAL')+v('OMNIVAMP'))/25,healing:v('HEAL_AND_SHIELD_POWER')/16,mana:(v('MANA')/700+v('BASE_MANA_REGENERATION')/205)/1.6,durable:def,'anti-tank':(damage==='magical'?v('MAGICAL_PENETRATION')/18:v('PHYSICAL_PENETRATION')/28)*.7+typed(['ANTI_TANK','PHYSICAL_SHRED','MAGICAL_SHRED'])*.25,aggressive:Math.min(1,Math.max(phys,mag))*.85*(1-Math.min(def,1)*.5)};
+  /* Raw power is in nearly every build, so it only names the build when no specialised stat stands out. */
+  for(const k of Object.keys(score))score[k]=Math.min(score[k],1.3);
+  const ranked=Object.entries(score).sort((a,b)=>b[1]-a[1]),primary=F.length>=3&&ranked[0][1]>=.6?ranked[0][0]:'balanced';
+  const label=id=>id==='healing'?'Healing / shielding':(STYLES.find(s=>s.id===id)||{label:id}).label;
+  return{primary,label:primary==='balanced'?'Mixed':label(primary),also:ranked.filter(([id,x])=>id!==primary&&x>=.7).map(([id])=>label(id)),damage,items:F.length,scores:Object.fromEntries(ranked.map(([k,x])=>[k,Math.round(x*100)/100]))};
  }
  /* Lane emphasis for heroes outside their usual job: offlane/jungle/support need more staying power,
     mid more haste and penetration, carry more damage. */
@@ -64,7 +102,7 @@
   const c=suggestionContext(input),style=input.style||'balanced';if(!c)return{status:'needs-context',items:[],reason:'Choose your hero and lane to see a starting build.'};
   /* PLAN.md 2026-11-01: only incomplete data blocks; changed data or code still allows suggestions */if(input.patchReview?.status==='source-incomplete')return{status:'review-required',items:[],reason:'Hero and item data did not refresh completely. Try again after the next data update.'};
   const choice=stylesFor(input).find(s=>s.id===style);if(!choice)return{status:'unsupported-style',items:[],reason:'Choose a style suited to this hero.'};
-  const ev=observed(input.matches,c.h.slug,c.role),selected=[],totals={},power=c.damage==='physical'?'PHYSICAL_POWER':'MAGICAL_POWER',penetration=c.damage==='physical'?'PHYSICAL_PENETRATION':'MAGICAL_PENETRATION';
+  const ev=blend(fromResearch(input.research,c.h.slug,c.role),observed(input.matches,c.h.slug,c.role,Object.fromEntries((input.catalog||[]).map(i=>[i.name,i])))),selected=[],totals={},power=c.damage==='physical'?'PHYSICAL_POWER':'MAGICAL_POWER',penetration=c.damage==='physical'?'PHYSICAL_PENETRATION':'MAGICAL_PENETRATION';
   const legal=it=>!selected.some(s=>s.name===it.name||[...(it.blocks||[]),...(it.blockedBy||[])].includes(s.name)||[...(s.blocks||[]),...(s.blockedBy||[])].includes(it.name));
   const score=it=>{
    const L=LANE[c.role]||LANE.MIDLANE;let n=stat(it,power)/50*(c.tank?.6:1.5)*L.power+stat(it,'ABILITY_HASTE')/20*(c.marksman?.25:1)*L.haste+(stat(it,'HEALTH')/400*(c.tank?1.5:.35)+((stat(it,'PHYSICAL_ARMOR')+stat(it,'MAGICAL_ARMOR'))/50)*(c.tank?1.5:.2))*L.def+stat(it,penetration)/15*(L.pen-1)*2+(stat(it,c.damage==='physical'?'LIFESTEAL':'MAGICAL_LIFESTEAL')+stat(it,'OMNIVAMP'))/10*((L.sustain||1)-1)*2;
@@ -94,9 +132,12 @@
   if(!c.support&&!c.tank&&!selected.some(it=>focused(it,'anti-tank',c)))add(it=>focused(it,'anti-tank',c));
   while(selected.length<6)if(!add(it=>c.marksman?stat(it,power)>0||stat(it,'ATTACK_SPEED')>0:c.tank?stat(it,'HEALTH')>0||stat(it,'PHYSICAL_ARMOR')>0||stat(it,'MAGICAL_ARMOR')>0:c.support?it.class==='SUPPORT'||stat(it,'HEAL_AND_SHIELD_POWER')>0:stat(it,power)>0))break;
   if(selected.length!==6)return{status:'insufficient-items',items:[],reason:'Six compatible current items are unavailable. Review a custom build instead.'};
+  /* Show the six in the order players buy them (observed slot order); without history keep core-first order. */
+  if(ev){const at=new Map(selected.map((it,k)=>[it.name,ev.position(it.name)+k*.001]));selected.sort((a,b)=>at.get(a.name)-at.get(b.name));}
+  const timings=ev?selected.map((_,k)=>ev.minute(k)):null;
   const rec=style==='balanced'?null:suggest({...input,style:'balanced'}),shared=rec?.items?selected.filter(it=>rec.items.includes(it.name)).length:0;
-  return{status:'ready',sharedWithRecommended:rec?shared:null,hero:c.h.slug,role:c.role,style,label:choice.label,tip:choice.tip,items:selected.map(it=>it.name),cost:selected.reduce((n,it)=>n+it.cost,0),stats:totals,damage:c.damage,evidence:ev?ev.games:null,countsAsOwned:false,source:ev&&ev.games.heroRole?'match-history+catalogue':'catalogue-suggestion'};
+  return{status:'ready',sharedWithRecommended:rec?shared:null,hero:c.h.slug,role:c.role,style,label:choice.label,tip:choice.tip,items:selected.map(it=>it.name),cost:selected.reduce((n,it)=>n+it.cost,0),stats:totals,damage:c.damage,evidence:ev?ev.games:null,order:ev?'observed':'core-first',timings,classification:classify(selected.map(it=>it.name),Object.fromEntries(selected.map(it=>[it.name,it]))),countsAsOwned:false,source:ev&&ev.games.research>=5?'research+catalogue':ev&&ev.games.heroRole?'match-history+catalogue':'catalogue-suggestion'};
  }
  function serialize({plans={},pivots={},catalog=[],heroes=[],now=Date.now()}={}){const clean={plans:{},pivots:{}};for(const[who,r]of Object.entries(plans))try{const p=createBaseline({...r,catalog,heroes,now});if(p.who===who)clean.plans[who]=p;}catch{}for(const[who,r]of Object.entries(pivots))try{const p=createPivot({...r,catalog,heroes,now});if(p.who===who)clean.pivots[who]=p;}catch{}return clean;}
- return{suggest,stylesFor,createBaseline,createPivot,getBaseline,getPivot,compare,team,serialize};
+ return{suggest,classify,stylesFor,createBaseline,createPivot,getBaseline,getPivot,compare,team,serialize};
 });

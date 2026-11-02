@@ -45,4 +45,5 @@ jobs:
           PREDGG_CLIENT_ID: ${{ secrets.PREDGG_CLIENT_ID }}
           PREDGG_CLIENT_SECRET: ${{ secrets.PREDGG_CLIENT_SECRET }}
           PREDGG_REFRESH_TOKEN: ${{ secrets.PREDGG_REFRESH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # only used to confirm the repo is private before research runs
         run: bash scripts/refresh.sh ${{ steps.meta.outputs.flag }}

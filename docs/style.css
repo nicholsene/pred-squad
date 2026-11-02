@@ -562,3 +562,14 @@ body{padding-bottom:110px;line-height:1.5}.ambient{background:radial-gradient(el
 .lb-bar { cursor: pointer; outline: none; }
 .lb-bar.on path, .lb-bar:focus-visible path { stroke: var(--text, #fff); stroke-width: 1.5; }
 .lb-tip { font-size: 12px; min-height: 1.4em; margin-top: 2px; }
+/* Research catalogue (Plan tab) */
+.research>summary{cursor:pointer;font-weight:650}
+.research-controls{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.research-controls label{display:flex;flex-direction:column;gap:2px;font-size:.8rem;min-width:0;flex:1 1 120px}
+.research-head{margin:6px 0}
+.research-thin{display:block;font-size:.8rem;color:var(--warn,#e0b14a)}
+.research-open{margin:4px 0 8px;padding-left:20px}
+.research-open small{display:block;opacity:.75}
+.research-items{width:100%;border-collapse:collapse;font-size:.85rem}
+.research-items th,.research-items td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--edge,#2a3644)}
+.research-items th:first-child,.research-items td:first-child{text-align:left}
