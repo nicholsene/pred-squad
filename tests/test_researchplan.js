@@ -25,3 +25,26 @@ assert.equal(P.plan({research:R,hero:'none',role:'CARRY',heroes}).status,'no-dat
 // bonus feeds the build: Penetrator gets a positive bonus, Crit (no change) none
 const bonus=P.counterBonus(p);assert(bonus.get('Pen')>0&&!bonus.has('Crit'));
 console.log('ok: matchup verdict with shrinkage, lane swing, game length, counter items, team profile, thin-sample fallback, build bonus');
+// 5v5 plan
+{
+  const lane=(games,wins,extra={})=>group(games,wins,extra);
+  const short=[[20,14],[20,10],[20,6]],long=[[20,6],[20,10],[20,14]];
+  const RT={heroes:{
+    a:{OFFLANE:{...lane(100,50,{length:short}),vs:{x:lane(40,30)}}},
+    b:{JUNGLE:{...lane(100,50,{length:short}),vs:{y:lane(40,12)}}},
+    c:{MIDLANE:{...lane(100,50,{length:short}),vs:{z:lane(30,15)}}},
+    d:{SUPPORT:{...lane(100,50,{length:short}),vs:{}}},
+    sky:{CARRY:{...lane(100,50,{length:short}),vs:{gun:lane(20,10)}}},
+    x:{OFFLANE:lane(80,40,{length:long})},y:{JUNGLE:lane(80,40,{length:long})},z:{MIDLANE:lane(80,40,{length:long})},gun:{CARRY:lane(80,40,{length:long})}}};
+  const hs=[...heroes,...'abcdxyz'.split('').map(s=>({slug:s,name:s.toUpperCase(),classes:['FIGHTER']}))];
+  const t=P.teamPlan({research:RT,ours:{OFFLANE:'a',JUNGLE:'b',MIDLANE:'c',SUPPORT:'d',CARRY:'sky'},theirs:{OFFLANE:'x',JUNGLE:'y',MIDLANE:'z',SUPPORT:'mage',CARRY:'gun'},heroes:hs,items,me:'CARRY'});
+  assert.equal(t.status,'ready');assert.deepEqual(t.counts,{favoured:1,unfavoured:1,even:2,unknown:1});
+  assert.match(t.findings[0].text,/1 favour us, 1 favour them, 2 even, 1 without enough/);
+  assert(t.findings.some(f=>f.kind==='timing'&&/We are the early team/.test(f.text)));
+  assert(t.findings.some(f=>f.kind==='focus'&&/Play through Offlane: A vs X won 75% of 40/.test(f.text)));
+  assert(t.findings.some(f=>f.kind==='danger'&&/Our jungle is the hardest matchup/.test(f.text)));
+  assert(t.lanes.find(l=>l.role==='CARRY').mine);assert.equal(t.lanes.find(l=>l.role==='SUPPORT').usual.games,100);
+  assert.equal(P.teamPlan({research:RT,ours:{OFFLANE:'a'},theirs:{OFFLANE:'x'},heroes:hs}).status,'incomplete');
+  assert.equal(P.teamPlan({research:null}).status,'no-data');
+  console.log('ok: 5v5 plan counts, early/late team, play-through and danger lanes, your lane, incomplete lineups');
+}

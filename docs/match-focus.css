@@ -254,3 +254,13 @@ input[data-suggested="1"]{border-style:dashed;}
 #match-focus #lifecycle .quick-game-plan summary{cursor:pointer;font-weight:650}
 #match-focus #lifecycle .quick-game-plan ul{margin:6px 0;padding-left:18px;display:grid;gap:4px;font-size:.86rem}
 #match-focus #lifecycle .quick-game-plan small{opacity:.7}
+#match-focus #lifecycle .quick-team-plan{border-top:1px solid var(--edge);padding-top:6px}
+#match-focus #lifecycle .quick-team-plan summary{cursor:pointer;font-weight:650}
+#match-focus #lifecycle .quick-team-plan ul{margin:6px 0;padding-left:18px;display:grid;gap:4px;font-size:.86rem}
+#match-focus #lifecycle .team-lanes{margin:4px 0;padding-left:0;list-style:none;display:grid;gap:3px;font-size:.84rem}
+#match-focus #lifecycle .team-lanes li{padding:3px 6px;border-radius:8px;border-left:3px solid var(--edge)}
+#match-focus #lifecycle .team-lanes li small{display:block;opacity:.75}
+#match-focus #lifecycle .team-lanes li.favoured{border-left-color:#4caf7a}
+#match-focus #lifecycle .team-lanes li.unfavoured{border-left-color:#e06a5a}
+#match-focus #lifecycle .team-lanes li.mine{background:rgba(120,160,255,.08)}
+#match-focus #lifecycle .quick-team-plan>small{opacity:.7}

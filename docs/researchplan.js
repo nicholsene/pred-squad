@@ -100,5 +100,72 @@
     return m;
   }
 
-  return { plan, counterBonus, damageOf, profile };
+  /* 5v5 plan from a full lineup (loading screen or scoreboard): every lane's matchup, which side is the
+     early team, where to play through and where to cover, and the enemy damage mix. No overall win
+     probability is claimed: lane results are not independent and team compositions are too sparse. */
+  const ROLES = ["OFFLANE", "JUNGLE", "MIDLANE", "SUPPORT", "CARRY"];
+  const LANE = { OFFLANE: "Offlane", JUNGLE: "Jungle", MIDLANE: "Mid", SUPPORT: "Support", CARRY: "Carry" };
+  function lean(R, hero, role) {                     // short-game win rate minus long-game win rate
+    const t = R?.heroes?.[hero]?.[role]?.length;
+    return t && t[0][0] >= MIN && t[2][0] >= MIN ? rate(t[0]) - rate(t[2]) : null;
+  }
+  const mean = v => { v = v.filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  function teamPlan({ research: R, ours = {}, theirs = {}, heroes = [], items = [], me = null } = {}) {
+    if (!R?.heroes) return { status: "no-data", findings: [], lanes: [] };
+    const heroName = s => heroes.find(h => h.slug === s)?.name || s;
+    const both = ROLES.filter(r => ours[r] && theirs[r]);
+    if (both.length < 4) return { status: "incomplete", findings: [], lanes: [], known: both.length };
+    const enemyTeam = ROLES.map(r => theirs[r]).filter(Boolean);
+    const lanes = ROLES.map(role => {
+      const hero = ours[role], enemy = theirs[role];
+      if (!hero || !enemy) return { role, hero, enemy, verdict: "unknown", games: 0 };
+      const p = plan({ research: R, hero, role, enemy, enemyTeam, heroes, items });
+      const edge = p.matchup ? p.matchup.adjusted - 0.5 : null;
+      const H = R.heroes?.[hero]?.[role];
+      return { role, hero, enemy, mine: role === me, games: p.matchup?.games || 0, winRate: p.matchup?.winRate ?? null, edge,
+        usual: H ? { games: H.games, winRate: H.wins / H.games } : null,
+        verdict: hero === enemy ? "mirror" : edge == null ? "unknown" : edge >= 0.03 ? "favoured" : edge <= -0.03 ? "unfavoured" : "even",
+        swing: p.lane?.swing ?? null, counters: p.counters, compCounters: p.compCounters, findings: p.findings };
+    });
+    const out = { status: "ready", lanes, findings: [] };
+    const say = (kind, text) => out.findings.push({ kind, text });
+    const fav = lanes.filter(l => l.verdict === "favoured"), unf = lanes.filter(l => l.verdict === "unfavoured"), unknown = lanes.filter(l => l.verdict === "unknown");
+    out.counts = { favoured: fav.length, unfavoured: unf.length, even: lanes.filter(l => ["even", "mirror"].includes(l.verdict)).length, unknown: unknown.length };
+    say("summary", `Lane matchups: ${fav.length} favour us, ${unf.length} favour them, ${out.counts.even} even` + (unknown.length ? `, ${unknown.length} without enough top-player games` : "") + ".");
+
+    // Early team vs late team
+    const us = mean(ROLES.map(r => ours[r] && lean(R, ours[r], r))), them = mean(ROLES.map(r => theirs[r] && lean(R, theirs[r], r)));
+    const nUs = ROLES.filter(r => ours[r] && lean(R, ours[r], r) != null).length, nThem = ROLES.filter(r => theirs[r] && lean(R, theirs[r], r) != null).length;
+    const spikes = ROLES.map(r => R.heroes?.[ours[r]]?.[r]?.minutes?.[1]).filter(Number.isFinite).sort((a, b) => a - b);
+    const spike = spikes.length ? spikes[Math.floor(spikes.length / 2)] : null;
+    if (us != null && them != null && nUs >= 3 && nThem >= 3) {
+      const d = us - them;
+      out.timing = { us, them, diff: d, spike };
+      if (d >= 0.06) say("timing", `We are the early team: compared with games past 35 min, our heroes gain ${Math.round(d * 100)} points more win rate in games under 25 min than theirs do. Fight for the first objectives and group once most of us have two items${spike ? ` (~${spike} min)` : ""}; don't let it drag past 35 min.`);
+      else if (d <= -0.06) say("timing", `They are the early team (their heroes' short-game edge is ${Math.round(-d * 100)} points bigger than ours). Avoid even fights before${spike ? ` ~${spike} min when most of us have two items` : " your second items"}; trade objectives instead of contesting, and play for late teamfights.`);
+      else say("timing", "Neither team leans clearly early or late. Play around whichever lanes win.");
+    }
+
+    // Where to play through, where to cover
+    const known = lanes.filter(l => l.edge != null && l.verdict !== "mirror").sort((a, b) => b.edge - a.edge);
+    const best = known[0], worst = known[known.length - 1];
+    if (best && best.verdict === "favoured") say("focus", best.role === "JUNGLE"
+      ? `Our jungle is the strongest matchup: ${heroName(best.hero)} vs ${heroName(best.enemy)} won ${pct(best.winRate)} of ${best.games} top-player games. Contest their jungle and early objectives; lanes should be ready to follow.`
+      : `Play through ${LANE[best.role]}: ${heroName(best.hero)} vs ${heroName(best.enemy)} won ${pct(best.winRate)} of ${best.games} top-player games.` + (best.swing >= 0.25 ? " Early jungle visits there snowball: a lead in this lane decides a lot." : ""));
+    if (worst && worst.verdict === "unfavoured" && worst !== best) say("danger", worst.role === "JUNGLE"
+      ? `Our jungle is the hardest matchup: ${heroName(worst.hero)} vs ${heroName(worst.enemy)} won ${pct(worst.winRate)} of ${worst.games}. Avoid early 1v1s and invades; lanes with priority should help cover jungle entrances.`
+      : `${LANE[worst.role]} is our hardest lane: ${heroName(worst.hero)} vs ${heroName(worst.enemy)} won ${pct(worst.winRate)} of ${worst.games}. Play it safe, ward, and cover it early rather than forcing fights there.`);
+
+    // Damage mix
+    const theirMix = profile(enemyTeam, heroes), ourMix = profile(ROLES.map(r => ours[r]).filter(Boolean), heroes);
+    out.mix = { ours: ourMix, theirs: theirMix };
+    if (theirMix === "PHYSICAL" || theirMix === "MAGICAL") {
+      const kind = theirMix === "PHYSICAL" ? "physical" : "magical", fixes = lanes.flatMap(l => (l.compCounters || []).slice(0, 1).map(c => `${heroName(l.hero)}: ${c.label}`));
+      say("damage", `Their damage is mostly ${kind}, so ${kind} armor is worth more for everyone.` + (fixes.length ? ` Top players then add — ${fixes.join("; ")}.` : ""));
+    } else if (theirMix) say("damage", "Their damage is mixed; build defence against whoever is fed rather than one damage type.");
+    if (ourMix && ourMix !== "MIXED") say("damage", `Our damage is mostly ${ourMix === "PHYSICAL" ? "physical" : "magical"}: expect them to stack ${ourMix === "PHYSICAL" ? "physical" : "magical"} armor; anti-tank items gain value later.`);
+    return out;
+  }
+
+  return { plan, teamPlan, counterBonus, damageOf, profile };
 });
