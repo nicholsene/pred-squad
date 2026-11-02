@@ -143,6 +143,35 @@ def fetch_ranks(api: PredGG) -> dict:
     return {"season": cur["name"], "ranks": ranks}
 
 
+def probe_research(api: PredGG) -> dict:
+    """Yes/no checks for a top-player research catalogue (PLAN.md priority 8).
+    Saves no names or ids: only whether the leaderboard and a non-squad player's history are readable."""
+    out = {"checkedAt": now_iso(), "leaderboard": None, "otherPlayerHistory": None, "notes": []}
+    def ok(q, v=None):
+        try:
+            return True, api.query(q, v or {})
+        except PredGGError as e:
+            out["notes"].append(str(e)[:160])
+            return ("Forbidden" not in str(e)) and None, None
+    rs = api.public_query("{ ratings { id startTime } }")["ratings"]
+    cur = max(rs, key=lambda r: r.get("startTime") or "")["id"]
+    good, data = ok("query($r: ID!){ leaderboardPaginated(ratingId: $r, ratingType: CURRENT, limit: 1){ totalCount } }", {"r": cur})
+    out["leaderboard"] = good
+    if good:
+        out["leaderboardSize"] = data["leaderboardPaginated"]["totalCount"]
+    squad = {p["predId"] for p in CONFIG["players"]}
+    good, data = ok("query($id: ID!){ player(by: {id: $id}){ matchesPaginated(limit: 1){ results { match { matchPlayers { player { id } } } } } } }",
+                    {"id": next(iter(squad))})
+    other = None
+    if good:
+        for r in data["player"]["matchesPaginated"]["results"]:
+            other = next((mp["player"]["id"] for mp in r["match"]["matchPlayers"] if mp.get("player") and mp["player"]["id"] not in squad), None)
+    if other:
+        good, data = ok("query($id: ID!){ player(by: {id: $id}){ matchesPaginated(limit: 1){ totalCount } } }", {"id": other})
+        out["otherPlayerHistory"] = good and bool(data["player"]["matchesPaginated"]["totalCount"])
+    return out
+
+
 def fetch_items(api: PredGG) -> list[dict]:
     out = []
     for it in api.public_query(ITEMS_Q)["items"]:
@@ -398,6 +427,10 @@ def main() -> int:
     else:
         if not args.skip_matches:
             refresh("matches.json", lambda: fetch_matches(api, load("matches.json", {})))
+        try:
+            status["research"] = probe_research(api)
+        except Exception as e:  # best-effort check; never fail the data run over it
+            status["research"] = {"checkedAt": now_iso(), "error": str(e)[:200]}
         if not args.skip_meta:
             def meta_data():
                 patch, ids = current_patch(api)

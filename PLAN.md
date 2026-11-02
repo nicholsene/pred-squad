@@ -40,6 +40,7 @@ Help the squad win more: a phone-first page that shows records and stats, sugges
 | 4 | Scanner training from the private corpus (daily review) | Codex | ongoing | Per SCANNER_CORPUS.md. 164 photos collected and reviewed as of 2026-11-01. |
 | 5 | Personal profiles and squad build optimizer depth (from the former NEXT_RELEASE plan) | — | later | Keep chronological evaluation and no-leakage rules. Revisit when there are more games; ~126 matches is thin for per-hero models. |
 | 6 | Data refresh frequency | — | open | GitHub throttles the 30-min schedule; real runs are ~every 6 h. Options: accept, or move the fetch to a Supabase scheduled function. |
+| 8 | **Research catalogue**: top-ranked players' builds by hero, lane and enemy laner | Claude | checking access | Step 1: `fetch.py` `probe_research()` writes yes/no to `status.json` → `research` (leaderboard readable? non-squad player history readable?). No names or ids saved. Pred.gg's own core-build and matchup stats are Forbidden to outside apps; don't work around that. Publishing aggregates on a public repo needs Eric's public/private decision first. |
 | 7 | Code readability | — | open | Several files have 1,000–2,600-character lines (match.js, free-scan.js, planning.js, match-focus.js). Reformat when next touched. |
 
 ## What exists (short map)
