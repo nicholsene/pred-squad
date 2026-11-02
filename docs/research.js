@@ -1,5 +1,5 @@
 /* Research catalogue panel (Plan tab): what top-ranked players build by hero, lane and enemy laner.
-   Data: data/research.json, written daily by scripts/research.py only while the repo is private. */
+   Data: data/research.json, written daily by scripts/research.py. */
 (function () {
   "use strict";
   const LANES = [["CARRY", "Carry"], ["MIDLANE", "Mid"], ["OFFLANE", "Offlane"], ["JUNGLE", "Jungle"], ["SUPPORT", "Support"]];
@@ -25,7 +25,7 @@
     const D = R.data, body = el.querySelector(".research-body") || el;
     if (!R.loaded) { body.innerHTML = '<p class="note">Loading research…</p>'; return; }
     if (!D || !D.heroes) {
-      body.innerHTML = '<p class="note">Top-player builds appear here once the repo is private. They refresh once a day from the ranked games of the top 200 leaderboard players.</p>';
+      body.innerHTML = '<p class="note">Top-player builds appear here after the next daily data update. They refresh once a day from the ranked games of the top 200 leaderboard players.</p>';
       return;
     }
     const heroName = s => (A.heroes.find(h => h.slug === s)?.name) || s;

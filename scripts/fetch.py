@@ -431,15 +431,21 @@ def main() -> int:
             status["research"] = probe_research(api)
         except Exception as e:  # best-effort check; never fail the data run over it
             status["research"] = {"checkedAt": now_iso(), "error": str(e)[:200]}
-        # Research catalogue (PLAN.md priority 8): daily, and only while the repo is private.
+        # Research catalogue (PLAN.md priority 8): daily, switched on in config/squad.json "research".
         import research
+        rcfg = CONFIG.get("research") or {}
         prev = load("research.json", {})
         stale = not prev.get("updatedAt") or (datetime.now(timezone.utc) - datetime.fromisoformat(prev["updatedAt"].replace("Z", "+00:00"))).total_seconds() > 20 * 3600
-        if stale and research.repo_is_private():
+        if rcfg.get("enabled") and stale:
             catalog = {i["name"]: i for i in item_file.get("items", [])}
-            refresh("research.json", lambda: research.aggregate(research.collect(api, catalog, CONFIG.get("research")), hero_file.get("heroes", [])))
-        elif not research.repo_is_private() and (DATA / "research.json").exists():
-            (DATA / "research.json").unlink()   # never leave the catalogue on a public repo
+            def research_data():
+                try:
+                    return research.aggregate(research.collect(api, catalog, rcfg), hero_file.get("heroes", []))
+                except PredGGError:
+                    raise
+                except Exception as e:  # research must never break the squad data run
+                    raise PredGGError(f"research failed: {e}") from e
+            refresh("research.json", research_data)
         if not args.skip_meta:
             def meta_data():
                 patch, ids = current_patch(api)

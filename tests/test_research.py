@@ -1,5 +1,5 @@
 """Research catalogue: builds kept only above the rank cut-off, no names/ids, enemy laner and buy order kept,
-and nothing collected unless the repo is confirmed private."""
+"""
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -24,7 +24,4 @@ s = agg["heroes"]["skylar"]["CARRY"]
 assert s["games"] == 2 and s["wins"] == 1 and s["items"]["A"] == [2, 1, 0] and s["items"]["C"][2] == 4
 assert s["openings"][0] == {"items": ["A", "B", "C"], "games": 2, "wins": 1}
 assert s["vs"]["murdock"]["games"] == 2 and s["vsClass"]["SHARPSHOOTER"]["games"] == 2
-for k in ("GITHUB_REPOSITORY", "GITHUB_TOKEN", "RESEARCH_FORCE"):
-    os.environ.pop(k, None)
-assert research.repo_is_private() is False                          # unknown visibility counts as public
-print("ok: research cut-off, anonymity, buy order, minutes, enemy laner, aggregation and private-only gate")
+print("ok: research cut-off, anonymity, buy order, minutes, enemy laner and aggregation")

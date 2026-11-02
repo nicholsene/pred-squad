@@ -1,10 +1,10 @@
 """Research catalogue: what high-ranked players build, by hero, lane and enemy laner.
 
-Runs inside fetch.py once a day, and only while the GitHub repo is private (Eric, 2026-11-01:
-"keep it private, only for my friends"). Stores no player names or ids: each kept build is
-hero, lane, finished-item order, result, enemy laner, rank points and estimated item minutes.
+Runs inside fetch.py once a day when config/squad.json has "research": {"enabled": true}
+(Eric, 2026-11-01: repo stays public; the link just isn't shared). Re-collects from scratch each
+run (about 200 queries), so no raw cache is committed. Stores no player names or ids: each kept
+build is hero, lane, finished-item order, result, enemy laner, rank points and estimated item minutes.
 
-  research/cache.json      kept builds from recent matches (incremental, trimmed by age)
   docs/data/research.json  aggregates the app reads
 """
 from __future__ import annotations
@@ -14,8 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CACHE = ROOT / "research" / "cache.json"
-DEFAULTS = {"topPlayers": 200, "gamesPerPlayer": 20, "minPoints": 1200, "keepDays": 30}
+DEFAULTS = {"topPlayers": 200, "gamesPerPlayer": 25, "minPoints": 1200, "keepDays": 30}
 
 LEADERBOARD_Q = """
 query($r: ID!, $limit: Int, $offset: Int) {
@@ -39,20 +38,6 @@ query($id: ID!, $limit: Int) {
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def repo_is_private() -> bool:
-    """True only when GitHub confirms the repo is private. Anything uncertain counts as public."""
-    import os
-    import requests
-    repo, token = os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_TOKEN")
-    if not repo or not token:
-        return os.environ.get("RESEARCH_FORCE") == "1"   # local runs only
-    try:
-        r = requests.get(f"https://api.github.com/repos/{repo}", headers={"Authorization": f"Bearer {token}"}, timeout=20)
-        return r.ok and r.json().get("private") is True
-    except Exception:
-        return False
 
 
 def is_final(item: dict | None) -> bool:
@@ -85,9 +70,8 @@ def builds_from_match(m: dict, catalog: dict, min_points: float) -> list[dict]:
 
 def collect(api, catalog: dict, cfg: dict | None = None) -> dict:
     cfg = {**DEFAULTS, **(cfg or {})}
-    cache = json.loads(CACHE.read_text()) if CACHE.exists() else {"matches": {}}
+    cache = {"matches": {}}
     cutoff = (datetime.now(timezone.utc) - timedelta(days=cfg["keepDays"])).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cache["matches"] = {k: v for k, v in cache["matches"].items() if v.get("start", "") >= cutoff}
     ratings = api.public_query("{ ratings { id startTime } }")["ratings"]
     rating = max(ratings, key=lambda r: r.get("startTime") or "")["id"]
     players, offset = [], 0
@@ -112,9 +96,7 @@ def collect(api, catalog: dict, cfg: dict | None = None) -> dict:
                                          "builds": builds_from_match(m, catalog, cfg["minPoints"])}
             added += 1
     cache.update({"updatedAt": now_iso(), "sampledPlayers": min(len(players), cfg["topPlayers"]), "minPoints": cfg["minPoints"]})
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps(cache, separators=(",", ":")))
-    print(f"  research: {added} new matches, {len(cache['matches'])} kept")
+    print(f"  research: {added} matches from {cache['sampledPlayers']} players")
     return cache
 
 
