@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import requests
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -396,7 +397,9 @@ def main() -> int:
             record.pop("error", None)
             succeeded.add(name)
             return obj
-        except (PredGGError, ValueError, KeyError, TypeError) as e:
+        except (PredGGError, ValueError, KeyError, TypeError, requests.RequestException, OSError) as e:
+            # One dataset failing (bad response, missing asset, network blip) must not stop the others,
+            # so matches and meta still refresh. 2026-11-27: a missing new-item icon blocked every run for 2 days.
             record["error"] = str(e)
             status["errors"].append(f"{name}: {e}")
             print(f"  {name}: {e}")

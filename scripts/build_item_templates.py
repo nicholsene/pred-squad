@@ -28,7 +28,16 @@ def build(catalog,existing=None,cache=None):
     if existing and existing.get("patch")==catalog.get("patch") and existing.get("sourceFingerprint")==fingerprint:return existing
     cache=Path(cache) if cache else None
     if cache:cache.mkdir(parents=True,exist_ok=True)
+    previous={t["name"]:t for t in (existing or {}).get("templates",[]) if t.get("name")}
+    missing=[]
     def one(item):
+        try:return fetch_one(item)
+        except (requests.RequestException,OSError,ValueError) as e:
+            # One missing or broken icon (e.g. pred.gg not yet hosting a new item's art) must not stop the data run:
+            # keep the item's previous template if it had one, otherwise leave it out and report it.
+            missing.append({"name":item["name"],"icon":item["smallIcon"],"error":str(e)[:160]})
+            return previous.get(item["name"])
+    def fetch_one(item):
         icon=item["smallIcon"]
         if not all(c in "0123456789abcdef" for c in icon) or len(icon)>64:raise ValueError("Invalid canonical icon hash")
         url=f"https://pred.gg/assets/{icon}_128.webp"
@@ -40,8 +49,10 @@ def build(catalog,existing=None,cache=None):
             if p:p.write_bytes(data)
         image=Image.open(io.BytesIO(data));image.load()
         return {"name":item["name"],"descriptor":descriptor(image),"source":url}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:templates=list(pool.map(one,entries))
-    return {"schema":1,"patch":catalog.get("patch"),"updatedAt":datetime.now(timezone.utc).isoformat(),"sourceFingerprint":fingerprint,"templates":templates}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:templates=[t for t in pool.map(one,entries) if t]
+    if not templates:raise ValueError("No item icons could be downloaded")
+    # With icons missing, leave the fingerprint unset so the next run retries them instead of treating the set as complete.
+    return {"schema":1,"patch":catalog.get("patch"),"updatedAt":datetime.now(timezone.utc).isoformat(),"sourceFingerprint":None if missing else fingerprint,"templates":templates,"missing":sorted(missing,key=lambda m:m["name"])}
 
 if __name__=="__main__":
     import argparse
